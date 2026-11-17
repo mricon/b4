@@ -786,10 +786,15 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
             'This series is already tracked (status: %s, v%d)', status_str, cur_rev
         )
         logger.critical('Change-ID: %s', existing_change_id)
-        logger.critical(
-            'Use "b4 review forget %s" to erase it and track afresh.',
-            existing_change_id,
-        )
+        if status_str == 'archived':
+            logger.critical(
+                'Use "b4 review forget %s" to erase it and track afresh.',
+                existing_change_id,
+            )
+        else:
+            # Forgetting deletes the review branch, so never offer it for a
+            # series that still has a review in progress.
+            logger.critical('Use "b4 review tui" to work on it.')
         sys.exit(1)
 
     # Not tracked yet — create a new series and record its revisions.

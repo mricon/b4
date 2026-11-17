@@ -889,35 +889,6 @@ class TestCmdTrack:
         assert 'b4 review forget cid-arch' in caplog.text
         assert 'Upgrade the series in the review TUI' not in caplog.text
 
-    @mock.patch('b4.retrieve_messages')
-    @mock.patch('b4.LoreMailbox')
-    def test_track_already_tracked_hints_forget(
-        self,
-        mock_mailbox_class: mock.Mock,
-        mock_retrieve: mock.Mock,
-        gitdir: str,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Re-tracking with nothing new to record must hint at forget."""
-        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='dup-hint')
-        review_tracking.cmd_enroll(cmdargs_enroll)
-        mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
-
-        v1 = self._make_mock_lore_series(
-            revision=1, change_id='cid-dup', cover_msgid='dup-v1@example.com'
-        )
-        mbx = mock.Mock()
-        mbx.series = {1: v1}
-        mbx.get_series.return_value = v1
-        mock_mailbox_class.return_value = mbx
-        self._track('dup-v1@example.com', 'dup-hint')
-
-        with caplog.at_level(logging.CRITICAL, logger='b4'):
-            with pytest.raises(SystemExit) as excinfo:
-                self._track('dup-v1@example.com', 'dup-hint')
-        assert excinfo.value.code == 1
-        assert 'b4 review forget cid-dup' in caplog.text
-
     @mock.patch('b4.review.tracking.resolve_identifier', return_value=None)
     def test_track_fails_without_identifier(
         self, mock_resolve: mock.Mock, tmp_path: pytest.TempPathFactory
@@ -5360,12 +5331,28 @@ class TestCmdTrackAlreadyTrackedState:
         assert f'Use "b4 review forget {self.CHANGE_ID}"' in caplog.text
         assert 'Upgrade the series in the review TUI' not in caplog.text
 
+    @pytest.mark.parametrize(
+        ('v3_status', 'advice', 'not_advice'),
+        [
+            pytest.param('reviewing', '"b4 review tui"', 'review forget', id='live'),
+            pytest.param('archived', '"b4 review forget', 'review tui', id='archived'),
+        ],
+    )
     def test_no_new_revisions_reports_the_live_revision(
-        self, gitdir: str, caplog: pytest.LogCaptureFixture
+        self,
+        gitdir: str,
+        caplog: pytest.LogCaptureFixture,
+        v3_status: str,
+        advice: str,
+        not_advice: str,
     ) -> None:
-        """Re-tracking v3 refuses, naming the revision it already has."""
-        identifier = 'state-same-track'
-        self._seed_upgraded_series(gitdir, identifier, 'reviewing')
+        """Re-tracking v3 refuses, naming the revision it already has.
+
+        Forgetting deletes the review branch, so it is only offered for a
+        series the TUI no longer shows; a live one is pointed at the TUI.
+        """
+        identifier = f'state-same-track-{v3_status}'
+        self._seed_upgraded_series(gitdir, identifier, v3_status)
 
         with (
             caplog.at_level(logging.CRITICAL, logger='b4'),
@@ -5374,8 +5361,11 @@ class TestCmdTrackAlreadyTrackedState:
             self._track(identifier, revision=3)
 
         assert excinfo.value.code == 1
-        assert 'This series is already tracked (status: reviewing, v3)' in caplog.text
-        assert f'Use "b4 review forget {self.CHANGE_ID}"' in caplog.text
+        assert (
+            f'This series is already tracked (status: {v3_status}, v3)' in caplog.text
+        )
+        assert advice in caplog.text
+        assert not_advice not in caplog.text
 
 
 class TestCmdTrackRethreadOffline:
