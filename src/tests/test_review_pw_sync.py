@@ -12,7 +12,9 @@ the config knobs (pw-accept-state, pw-review-state) that decide which
 state is sent.  The Patchwork server is a fake that records requests.
 """
 
+import contextlib
 from typing import Any, Dict, List, Optional, Tuple
+from unittest import mock
 
 import pytest
 
@@ -267,3 +269,142 @@ class TestTakeUpdatesPatchwork:
         self._take(gitdir)
         assert fake_pw.gets == []
         assert fake_pw.patched == []
+
+
+class TestTuiFetchesKeyBeforeSync:
+    """With b4.pw-user the key comes from a git credential helper, and a
+    helper may ask for a passphrase on the terminal.  Every tracking-list
+    action that updates Patchwork while the TUI is on the screen must
+    fetch the key first, with the TUI out of the way.  Otherwise the first
+    of these actions in a session runs the helper under the TUI, or in the
+    queue's worker thread, where its prompt can't be seen or answered."""
+
+    @pytest.fixture
+    def app(self, gitdir: str, fake_pw: _FakePw) -> Any:
+        pytest.importorskip('textual')
+        from b4.review_tui._tracking_app import TrackingApp
+
+        _seed(status='thanked')
+        return TrackingApp(IDENTIFIER)
+
+    @pytest.fixture
+    def order(self, fake_pw: _FakePw, monkeypatch: pytest.MonkeyPatch) -> List[str]:
+        """What happened, in order: 'key' for a fetch, the caller adds more."""
+        import b4.review_tui._tracking_app as _tracking_app
+
+        order: List[str] = []
+
+        def _fetch(app: Any) -> str:
+            # Nothing may have reached Patchwork before the key is in hand
+            assert fake_pw.gets == []
+            assert fake_pw.patched == []
+            order.append('key')
+            return 'key'
+
+        monkeypatch.setattr(_tracking_app, 'pw_key_suspended', _fetch)
+        return order
+
+    def test_reopening_a_thanked_series(
+        self, app: Any, order: List[str], fake_pw: _FakePw, gitdir: str
+    ) -> None:
+        b4.MAIN_CONFIG['pw-review-state'] = 'under-review'
+        branch = f'b4/review/{CHANGE_ID}'
+        ecode, _out = b4.git_run_command(gitdir, ['branch', branch])
+        assert ecode == 0
+        app._selected_series = {
+            'change_id': CHANGE_ID,
+            'revision': 1,
+            'status': 'thanked',
+        }
+        with (
+            mock.patch.object(b4.review, 'update_tracking_status'),
+            mock.patch.object(app, 'exit') as app_exit,
+        ):
+            app.action_review()
+        app_exit.assert_called_once_with(branch)
+        assert order == ['key']
+        assert _sent(fake_pw) == [{'state': 'under-review', 'archived': False}] * len(
+            PW_PATCH_IDS
+        )
+
+    def test_checking_out_a_series(
+        self, app: Any, order: List[str], fake_pw: _FakePw
+    ) -> None:
+        import b4.review_tui._tracking_app as _tracking_app
+
+        b4.MAIN_CONFIG['pw-review-state'] = 'under-review'
+        lser = mock.Mock(complete=False)
+        lser.patches = [mock.Mock(body='body', msgid='patch1@example.com')]
+        series = {'change_id': CHANGE_ID, 'revision': 1}
+        with (
+            mock.patch.object(_tracking_app, 'suspended', contextlib.nullcontext),
+            mock.patch.object(b4, 'git_fetch_am_into_repo'),
+            mock.patch.object(b4.review, 'create_review_branch'),
+            mock.patch.object(app, 'exit') as app_exit,
+        ):
+            app._do_checkout(lser, series, base_commit='HEAD', ambytes=b'')
+        app_exit.assert_called_once()
+        assert order == ['key']
+        assert _sent(fake_pw) == [{'state': 'under-review'}] * len(PW_PATCH_IDS)
+
+    @pytest.mark.parametrize('after_thanks', [False, True])
+    def test_archiving_a_series(
+        self, app: Any, order: List[str], after_thanks: bool
+    ) -> None:
+        def _archive(*args: Any, **kwargs: Any) -> bool:
+            order.append('archive')
+            return False
+
+        with mock.patch.object(app, '_archive_branch', _archive):
+            if after_thanks:
+                app._archive_after_thanks({'change_id': CHANGE_ID, 'revision': 1})
+            else:
+                app._on_archive_confirmed(True, CHANGE_ID, 'b4/review/x', True, 1)
+        assert order == ['key', 'archive']
+
+    def test_delivering_the_queue(self, app: Any, order: List[str]) -> None:
+        """Delivery archives the series it was asked to, from a worker."""
+        with mock.patch.object(
+            app, 'push_screen', lambda *a, **k: order.append('deliver')
+        ):
+            app._deliver_queue()
+        assert order == ['key', 'deliver']
+
+    def test_no_fetch_when_the_action_leaves_patchwork_alone(
+        self, app: Any, order: List[str], fake_pw: _FakePw
+    ) -> None:
+        """Without pw-review-state a checkout sends nothing to Patchwork,
+        so it must not cost a passphrase prompt either."""
+        import b4.review_tui._tracking_app as _tracking_app
+
+        lser = mock.Mock(complete=False)
+        lser.patches = [mock.Mock(body='body', msgid='patch1@example.com')]
+        series = {'change_id': CHANGE_ID, 'revision': 1}
+        with (
+            mock.patch.object(_tracking_app, 'suspended', contextlib.nullcontext),
+            mock.patch.object(b4, 'git_fetch_am_into_repo'),
+            mock.patch.object(b4.review, 'create_review_branch'),
+            mock.patch.object(app, 'exit'),
+        ):
+            app._do_checkout(lser, series, base_commit='HEAD', ambytes=b'')
+        assert order == []
+        assert fake_pw.patched == []
+
+    def test_a_missing_key_is_reported(
+        self, app: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The update is skipped without a key, and the helper's own error
+        went to a screen the TUI has since redrawn."""
+        import b4.review_tui._tracking_app as _tracking_app
+
+        del b4.MAIN_CONFIG['pw-key']
+        b4.MAIN_CONFIG['pw-user'] = 'me'
+        monkeypatch.setattr(_tracking_app, 'pw_key_suspended', lambda app: '')
+        notes: List[str] = []
+        with (
+            mock.patch.object(app, 'notify', lambda msg, **k: notes.append(msg)),
+            mock.patch.object(app, '_archive_branch', return_value=False),
+        ):
+            app._on_archive_confirmed(True, CHANGE_ID, 'b4/review/x', True, 1)
+        assert len(notes) == 1
+        assert 'me@pw.example.org' in notes[0]

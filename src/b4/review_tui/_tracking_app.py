@@ -1881,6 +1881,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     if status == 'thanked':
                         review_state = b4.review.pw_config_state('pw-review-state')
                         if review_state:
+                            self._fetch_pw_key()
                             b4.review.pw_update_tracked_series(
                                 self._identifier,
                                 change_id,
@@ -2363,6 +2364,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         # Update Patchwork state, as b4 am/shazam do with pw-review-state
         review_state = b4.review.pw_config_state('pw-review-state')
         if review_state and self._identifier:
+            self._fetch_pw_key()
             b4.review.pw_update_tracked_series(
                 self._identifier,
                 series.get('change_id', ''),
@@ -5058,7 +5060,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         archived.  Returns True on success.
 
         The series is also archived in Patchwork; *pw_state*, when given,
-        sets its Patchwork state as well.
+        sets its Patchwork state as well.  A caller that is not inside
+        ``suspended()`` must call :meth:`_fetch_pw_key` first.
 
         When *notify* is False, TUI notifications are suppressed (useful
         when called from within ``suspend()``).
@@ -5102,6 +5105,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> None:
         if not confirmed:
             return
+        # Archiving also archives the series in Patchwork
+        self._fetch_pw_key()
         if self._archive_branch(change_id, revision, review_branch):
             self._selected_series = None
             panel = self.query_one('#details-panel', Vertical)
@@ -5399,6 +5404,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             self.notify('Not archived: newer revision available')
             return
         review_branch = f'b4/review/{change_id}'
+        # Archiving also archives the series in Patchwork
+        self._fetch_pw_key()
         if self._archive_branch(
             change_id,
             revision,
@@ -5469,6 +5476,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     self._focus_change_id = self._selected_series.get('change_id')
                 self._load_series()
 
+        # Delivery runs in a worker thread, and archives in Patchwork the
+        # series that asked to be archived once thanked.
+        self._fetch_pw_key()
         self.push_screen(
             QueueDeliveryScreen(
                 self._queue_count,
@@ -5492,16 +5502,32 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 severity='error',
             )
             return
-        if not pw_key_suspended(self):
-            config = b4.get_main_config()
-            pwhost = urllib.parse.urlparse(str(config.get('pw-url', ''))).netloc
-            self.notify(
-                f'No Patchwork key for {config.get("pw-user")}@{pwhost}'
-                ' from git credential helpers',
-                severity='error',
-            )
+        if not self._fetch_pw_key():
             return
         self.exit(self.PATCHWORK_SENTINEL)
+
+    def _fetch_pw_key(self) -> str:
+        """Return the Patchwork key, fetching it with the TUI out of the way.
+
+        Call this, outside of any suspended block, before a step that talks
+        to Patchwork with the TUI on the screen or from a worker thread.
+        A git credential helper may need the terminal, and only here can
+        it have it; the step itself then finds the key in the cache.
+        """
+        pwkey = pw_key_suspended(self)
+        if not pwkey:
+            config = b4.get_main_config()
+            pwuser = config.get('pw-user')
+            pwurl = str(config.get('pw-url', '') or '')
+            if pwuser and pwurl:
+                # The helpers' own error went to the suspended screen
+                pwhost = urllib.parse.urlparse(pwurl).netloc
+                self.notify(
+                    f'No Patchwork key for {pwuser}@{pwhost}'
+                    ' from git credential helpers',
+                    severity='error',
+                )
+        return pwkey
 
     def action_suspend(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
