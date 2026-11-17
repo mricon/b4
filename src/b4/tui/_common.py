@@ -116,6 +116,22 @@ def suspended(
         raise caught
 
 
+def pw_key_suspended(app: 'App[Any]') -> str:
+    """Return the Patchwork API key, fetching it with the TUI out of the way.
+
+    A git credential helper may ask for a passphrase on the terminal, so it
+    cannot run while Textual owns it.  Call this from the main thread before
+    anything needs the key: later lookups, also from worker threads, are
+    answered from the cache.  The app is only suspended when a helper really
+    runs, to spare everyone else the flicker.
+    """
+    config = b4.get_main_config()
+    if not b4.pw_key_needs_helper(config):
+        return b4.get_pw_key(config)
+    with suspended(app):
+        return b4.get_pw_key(config)
+
+
 def send_suspended(
     app: 'App[Any]',
     msgs: Sequence[email.message.EmailMessage],

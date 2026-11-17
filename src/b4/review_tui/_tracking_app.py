@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import urllib.parse
 from string import Template
 from typing import (
     Any,
@@ -69,6 +70,7 @@ from b4.review_tui._common import (
     matches_limit,
     notify_quit_hint,
     pad_display,
+    pw_key_suspended,
     resolve_styles,
     run_lore_worker,
     send_suspended,
@@ -1173,9 +1175,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._db_mtime: float = 0.0
         # Detect patchwork configuration
         config = b4.get_main_config()
-        self._pwkey = b4.get_pw_key(config)
-        self._pwurl = str(config.get('pw-url', ''))
-        self._pwproj = str(config.get('pw-project', ''))
+        # The key itself is only fetched when Patchwork is used: getting it
+        # from a credential helper can mean a passphrase prompt or a
+        # hardware key touch.
+        self._pw_configured = bool(
+            config.get('pw-url')
+            and config.get('pw-project')
+            and (config.get('pw-key') or config.get('pw-user'))
+        )
         # Remember last snooze choices within the session
         self._last_snooze_source: str = ''
         self._last_snooze_input: str = ''
@@ -1672,7 +1679,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         if action == 'process_queue':
             return self._queue_count > 0
         if action == 'patchwork':
-            return bool(self._pwkey and self._pwurl and self._pwproj)
+            return self._pw_configured
         if action == 'action':
             return self._selected_series is not None
         if action == 'update_revision':
@@ -5478,9 +5485,19 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
     def action_patchwork(self) -> None:
         """Exit to the outer loop so it can launch the Patchwork TUI."""
-        if not (self._pwkey and self._pwurl and self._pwproj):
+        if not self._pw_configured:
             self.notify(
-                'Patchwork not configured (need b4.pw-key, b4.pw-url, b4.pw-project)',
+                'Patchwork not configured (need b4.pw-url, b4.pw-project,'
+                ' and b4.pw-key or b4.pw-user)',
+                severity='error',
+            )
+            return
+        if not pw_key_suspended(self):
+            config = b4.get_main_config()
+            pwhost = urllib.parse.urlparse(str(config.get('pw-url', ''))).netloc
+            self.notify(
+                f'No Patchwork key for {config.get("pw-user")}@{pwhost}'
+                ' from git credential helpers',
                 severity='error',
             )
             return

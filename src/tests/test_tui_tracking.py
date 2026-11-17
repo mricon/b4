@@ -590,6 +590,57 @@ class TestTrackingFocusChangeId:
             assert app._selected_series['change_id'] == 'test-change-alpha'
 
 
+class TestTrackingPatchworkKey:
+    """With b4.pw-user the Patchwork key comes from a git credential helper,
+    which is not free to run: fetch the key when Patchwork is used."""
+
+    def test_startup_does_not_fetch_the_patchwork_key(self) -> None:
+        """Most sessions never touch Patchwork, and a credential helper can
+        mean a passphrase prompt or a hardware key touch on every start."""
+        b4.MAIN_CONFIG.update(
+            {
+                'pw-user': 'me',
+                'pw-url': 'https://pw.example.org/',
+                'pw-project': 'proj',
+            }
+        )
+        with patch.object(b4, 'git_credential_fill') as fill:
+            app = TrackingApp('test-pw-lazy')
+        fill.assert_not_called()
+        # pw-user is enough to offer Patchwork: the key comes later
+        assert app.check_action('patchwork', ()) is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('pwkey', ['', 'fromhelper'])
+    async def test_patchwork_fetches_the_key_on_demand(self, pwkey: str) -> None:
+        """Without a key there is no Patchwork TUI to open.  Leaving the
+        tracking list anyway would bring the user straight back to it with
+        no word about what went wrong."""
+        seed_db('test-pw-ondemand', [])
+        b4.MAIN_CONFIG.update(
+            {
+                'pw-user': 'me',
+                'pw-url': 'https://pw.example.org/',
+                'pw-project': 'proj',
+            }
+        )
+        app = TrackingApp('test-pw-ondemand')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with patch.object(
+                _tracking_app, 'pw_key_suspended', return_value=pwkey
+            ) as fetch:
+                app.action_patchwork()
+            await pilot.pause()
+            fetch.assert_called_once_with(app)
+            messages = [n.message for n in app._notifications]
+            if pwkey:
+                assert app.return_value == TrackingApp.PATCHWORK_SENTINEL
+            else:
+                assert app._exit is False
+                assert any('me@pw.example.org' in m for m in messages)
+
+
 class TestTrackingQuit:
     """Tests for quitting the app."""
 

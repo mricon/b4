@@ -17,6 +17,7 @@ pytest.importorskip('textual')
 from textual.app import App
 from textual.binding import Binding
 
+import b4
 import b4.bugs
 from b4.tui._common import (
     QUIT_BINDINGS,
@@ -24,6 +25,7 @@ from b4.tui._common import (
     limit_substring_matcher,
     matches_limit,
     notify_quit_hint,
+    pw_key_suspended,
     send_suspended,
     suspended,
 )
@@ -222,6 +224,49 @@ def apps_sigint() -> Iterator[List[int]]:
         yield seen
     finally:
         signal.signal(signal.SIGINT, prev)
+
+
+class TestPwKeySuspended:
+    """A credential helper may ask for a passphrase on the terminal.  While
+    the TUI owns the terminal that prompt is hidden and cannot be answered,
+    so the TUI must step aside for the lookup -- but only for a lookup that
+    really runs a helper, because stepping aside makes the screen flicker."""
+
+    PW_USER_CONFIG = {'pw-user': 'me', 'pw-url': 'https://pw.example.org/'}
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(b4, '_PW_KEY_CACHE', {})
+
+    def test_helper_runs_with_the_tui_out_of_the_way(
+        self, suspendable: Tuple[App[None], _FakeDriver]
+    ) -> None:
+        app, driver = suspendable
+        b4.MAIN_CONFIG.update(self.PW_USER_CONFIG)
+        during: List[str] = []
+
+        def _fill(*args: Any, **kwargs: Any) -> str:
+            during.extend(driver.calls)
+            return 'fromhelper'
+
+        with mock.patch.object(b4, 'git_credential_fill', _fill):
+            assert pw_key_suspended(app) == 'fromhelper'
+        assert during == ['suspend']
+        assert driver.calls == ['suspend', 'resume']
+
+    @pytest.mark.parametrize('cached', [False, True])
+    def test_no_flicker_when_no_helper_runs(
+        self, suspendable: Tuple[App[None], _FakeDriver], cached: bool
+    ) -> None:
+        app, driver = suspendable
+        if cached:
+            b4.MAIN_CONFIG.update(self.PW_USER_CONFIG)
+            with mock.patch.object(b4, 'git_credential_fill', return_value='key'):
+                b4.get_pw_key()
+        else:
+            b4.MAIN_CONFIG.update({'pw-key': 'key'})
+        assert pw_key_suspended(app) == 'key'
+        assert driver.calls == []
 
 
 class TestSuspended:

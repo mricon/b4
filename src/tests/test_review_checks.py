@@ -1549,6 +1549,38 @@ class TestCheckRunnerWorkerContract:
         assert kwargs.get('thread') is True
         assert kwargs.get('exit_on_error') is False
 
+    @pytest.mark.parametrize(
+        'cmds,expect_fetch',
+        [
+            ((['_builtin_patchwork'], []), True),
+            ((['mycheck'], ['_builtin_patchwork']), True),
+            ((['mycheck'], []), False),
+        ],
+    )
+    def test_patchwork_key_is_fetched_before_the_worker_starts(
+        self, cmds: Tuple[List[str], List[str]], expect_fetch: bool
+    ) -> None:
+        """The worker thread cannot hand the terminal to a credential helper,
+        so the key must be in hand before it starts -- and must not be asked
+        for when no check is going to use it."""
+        from b4.review_tui._common import CheckRunnerMixin
+
+        host = mock.Mock()
+        host._get_check_context.return_value = ('cover@example.com', 'a series', '')
+        order: List[str] = []
+        host.run_worker.side_effect = lambda *a, **k: order.append('worker')
+
+        with (
+            mock.patch('b4.review.checks.load_check_cmds', return_value=cmds),
+            mock.patch(
+                'b4.review_tui._common.pw_key_suspended',
+                side_effect=lambda app: order.append('key'),
+            ),
+        ):
+            cast(Any, CheckRunnerMixin)._run_checks(host, force=False)
+
+        assert order == (['key', 'worker'] if expect_fetch else ['worker'])
+
     def test_fetch_cancellation_dismisses_overlay_quietly(self) -> None:
         from b4.review_tui._common import CheckRunnerMixin
 

@@ -3048,6 +3048,23 @@ class TestGetPwKey:
         assert b4.get_pw_key(config) == 'key'
         assert seen.read_text().strip() == '0'
 
+    def test_needs_helper(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        """Callers that must get the terminal ready for a credential helper
+        need to know when one is about to run, and when it is not."""
+        self._set_helper(monkeypatch, tmp_path, 'echo password=key')
+        config: b4.ConfigDictT = {
+            'pw-user': 'me',
+            'pw-url': 'https://pw.example.org/',
+        }
+        assert not b4.pw_key_needs_helper({})
+        assert not b4.pw_key_needs_helper({**config, 'pw-key': 'secret'})
+        assert not b4.pw_key_needs_helper({'pw-user': 'me'})
+        assert b4.pw_key_needs_helper(config)
+        b4.get_pw_key(config)
+        assert not b4.pw_key_needs_helper(config)
+
     def test_ignored_in_worktree_config(self, gitdir: str) -> None:
         """A cloned tree's .b4-config must not get to ask for credentials."""
         wtcfg = pathlib.Path(gitdir) / '.b4-config'

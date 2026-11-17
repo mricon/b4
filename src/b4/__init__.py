@@ -2517,7 +2517,7 @@ class LoreMessage:
         pwproj = str(config.get('pw-project', ''))
         if not (pwkey and pwurl and pwproj):
             logger.debug(
-                'Patchwork support requires pw-key, pw-url and pw-project settings'
+                'Patchwork support requires pw-url, pw-project, and pw-key or pw-user'
             )
             raise LookupError('Error looking up %s in patchwork' % msgid)
 
@@ -6459,6 +6459,21 @@ def get_smtp(
     return SMTPConnector(_connect), fromaddr
 
 
+def pw_key_needs_helper(config: Optional[ConfigDictT] = None) -> bool:
+    """Tell if get_pw_key() is going to run the git credential helpers.
+
+    A helper may need the terminal, for example to ask for a passphrase,
+    so a TUI has to step aside before such a lookup.
+    """
+    if config is None:
+        config = get_main_config()
+    if config.get('pw-key'):
+        return False
+    pwuser = str(config.get('pw-user', '') or '')
+    pwurl = str(config.get('pw-url', '') or '')
+    return bool(pwuser and pwurl) and (pwurl, pwuser) not in _PW_KEY_CACHE
+
+
 def get_pw_key(config: Optional[ConfigDictT] = None) -> str:
     """Return the Patchwork API key.
 
@@ -6530,7 +6545,7 @@ def patchwork_set_state(msgids: List[str], state: str) -> None:
     pwproj = str(config.get('pw-project', ''))
     if not (pwkey and pwurl and pwproj):
         logger.debug(
-            'Patchwork support requires pw-key, pw-url and pw-project settings'
+            'Patchwork support requires pw-url, pw-project, and pw-key or pw-user'
         )
         return
     pses, url = get_patchwork_session(pwkey, pwurl)

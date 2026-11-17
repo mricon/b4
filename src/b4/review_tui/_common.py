@@ -13,12 +13,10 @@ import tempfile
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
     Callable,
     Dict,
     List,
     Optional,
-    ParamSpec,
     Protocol,
     Set,
     Tuple,
@@ -107,6 +105,9 @@ from b4.tui._common import (
     pad_display as pad_display,
 )
 from b4.tui._common import (
+    pw_key_suspended as pw_key_suspended,
+)
+from b4.tui._common import (
     resolve_styles as resolve_styles,
 )
 from b4.tui._common import (
@@ -131,10 +132,10 @@ from b4.tui._common import (
 logger = b4.logger
 
 if TYPE_CHECKING:
+    from textual.app import App
+
     from b4.review_tui._modals import CheckLoadingScreen
 
-_CallFromThreadParams = ParamSpec('_CallFromThreadParams')
-_CallFromThreadReturn = TypeVar('_CallFromThreadReturn')
 _WorkerResult = TypeVar('_WorkerResult')
 
 
@@ -204,24 +205,12 @@ CI_CHECK_LABELS = {
 }
 
 
-class _CallFromThreadHost(Protocol):
-    def call_from_thread(
-        self,
-        callback: Callable[
-            _CallFromThreadParams,
-            _CallFromThreadReturn | Awaitable[_CallFromThreadReturn],
-        ],
-        *args: _CallFromThreadParams.args,
-        **kwargs: _CallFromThreadParams.kwargs,
-    ) -> _CallFromThreadReturn: ...
-
-
 class _CheckRunnerHost(Protocol):
     _check_loading: Optional['CheckLoadingScreen']
     _check_worker: Optional[Worker[None]]
 
     @property
-    def app(self) -> _CallFromThreadHost: ...
+    def app(self) -> 'App[Any]': ...
 
     def _get_check_context(self) -> Optional[Tuple[str, str, str]]: ...
 
@@ -297,7 +286,14 @@ class CheckRunnerMixin:
         if not message_id:
             self.notify('No message-id for this series', severity='error')
             return
+        import b4.review.checks as checks
         from b4.review_tui._modals import CheckLoadingScreen
+
+        perpatch_cmds, series_cmds = checks.load_check_cmds()
+        if '_builtin_patchwork' in perpatch_cmds + series_cmds:
+            # The worker thread cannot hand the terminal to a credential
+            # helper, so have the key cached before it starts.
+            pw_key_suspended(self.app)
 
         self._check_loading = CheckLoadingScreen()
         self.push_screen(self._check_loading)
