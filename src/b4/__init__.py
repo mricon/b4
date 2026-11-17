@@ -3020,6 +3020,9 @@ class LoreMessage:
         deduped_to, deduped_cc = LoreMessage.make_reply_addrs(
             to_addrs, orig_to + orig_cc
         )
+        deduped_to, deduped_cc = apply_me_too(
+            deduped_to, deduped_cc, mailfrom, get_me_too_mode('send-me-too')
+        )
 
         msg = EmailMessage()
         msg.set_payload(body, charset='utf-8')

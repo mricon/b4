@@ -3891,6 +3891,12 @@ def _build_review_email(
         cc_addrs = orig_to + orig_cc
 
         deduped_to, deduped_cc = b4.LoreMessage.make_reply_addrs(to_addrs, cc_addrs)
+        deduped_to, deduped_cc = b4.apply_me_too(
+            deduped_to,
+            deduped_cc,
+            (user_name, user_email),
+            b4.get_me_too_mode('send-me-too'),
+        )
         msg['To'] = b4.format_addrs(deduped_to, clean=False)
         if deduped_cc:
             msg['Cc'] = b4.format_addrs(deduped_cc, clean=False)

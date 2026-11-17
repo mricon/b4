@@ -23,6 +23,8 @@ import pytest
 
 import b4
 
+from .helpers.mail import make_msg
+
 
 @pytest.mark.parametrize(
     'source,expected',
@@ -2137,6 +2139,81 @@ def test_get_link_msgids_from_lmsg() -> None:
     # The Link: resolves to a msgid; the Closes: bug URL has no msgid, and the
     # Signed-off-by is not a link trailer at all.
     assert b4.get_link_msgids_from_lmsg(lmsg) == {'20240101-orig-1-abc@example.com'}
+
+
+def _reply_rcpts(
+    orig: email.message.EmailMessage,
+) -> Tuple[List[str], List[str]]:
+    """Reply to *orig* as me@example.com and return the To and Cc addresses."""
+    reply = b4.LoreMessage(orig).make_reply('ok', mailfrom=('Me', 'me@example.com'))
+    tos = [addr for _, addr in email.utils.getaddresses(reply.get_all('to', []))]
+    ccs = [addr for _, addr in email.utils.getaddresses(reply.get_all('cc', []))]
+    return tos, ccs
+
+
+@pytest.mark.parametrize(
+    'conf,orig_cc,expected',
+    [
+        # Default: a reply to a thread we only read on the list still
+        # lands in our own inbox
+        (
+            'yes',
+            'o@example.com',
+            ['list@example.com', 'o@example.com', 'me@example.com'],
+        ),
+        # Already a recipient under different case: no duplicate
+        ('yes', 'ME@example.com', ['list@example.com', 'ME@example.com']),
+        # "no" neither adds us nor takes us out
+        ('no', 'o@example.com', ['list@example.com', 'o@example.com']),
+        ('no', 'ME@example.com', ['list@example.com', 'ME@example.com']),
+        # "never" takes us out even when the original included us
+        (
+            'never',
+            'ME@example.com, o@example.com',
+            ['list@example.com', 'o@example.com'],
+        ),
+        ('never', 'o@example.com', ['list@example.com', 'o@example.com']),
+    ],
+)
+def test_make_reply_send_me_too(
+    monkeypatch: pytest.MonkeyPatch, conf: str, orig_cc: str, expected: List[str]
+) -> None:
+    """b4.send-me-too decides if a reply adds, keeps or drops our address."""
+    monkeypatch.setitem(b4.MAIN_CONFIG, 'send-me-too', conf)
+    orig = make_msg('orig@example.com', 'a thing', to='list@example.com', cc=orig_cc)
+    tos, ccs = _reply_rcpts(orig)
+    assert tos == ['test@example.com']
+    assert ccs == expected
+
+
+@pytest.mark.parametrize(
+    'orig_cc,expected_to,expected_cc',
+    [
+        # Dropping us must not leave a mail without a To header
+        ('list@example.com', ['list@example.com'], []),
+        # Nobody else to write to: keeping us beats an unsendable mail
+        (None, ['me@example.com'], []),
+    ],
+)
+def test_make_reply_send_me_too_never_to_self(
+    monkeypatch: pytest.MonkeyPatch,
+    orig_cc: Optional[str],
+    expected_to: List[str],
+    expected_cc: List[str],
+) -> None:
+    """Replying to our own message with "never" still has someone in To."""
+    monkeypatch.setitem(b4.MAIN_CONFIG, 'send-me-too', 'never')
+    orig = make_msg(
+        'orig@example.com', 'a thing', from_addr='Me <me@example.com>', cc=orig_cc
+    )
+    assert _reply_rcpts(orig) == (expected_to, expected_cc)
+
+
+def test_make_reply_send_me_too_without_identity() -> None:
+    """With no address of our own configured, there is nobody to Cc."""
+    orig = make_msg('orig@example.com', 'a thing', to='list@example.com')
+    reply = b4.LoreMessage(orig).make_reply('ok', mailfrom=('', ''))
+    assert reply.get_all('cc') == ['list@example.com']
 
 
 def test_map_codereview_trailers_exposes_parent_patches(sampledir: str) -> None:

@@ -1207,12 +1207,27 @@ Contributor-oriented settings
      Default: ``no``
 
    :term:`b4.send-me-too`
-     Instructs b4 to include your own address when sending. Set by default,
-     use ``no`` to suppress sending to yourself.
+     Controls if you get your own copy of the mail that b4 sends:
+
+     ``yes``
+       Add your address to the Cc if you are not a recipient already.
+     ``no``
+       Do not add your address, but keep it if the message you reply to
+       already included you.
+     ``never``
+       Remove your address from the To and Cc.
+
+     ``b4 send`` has no message to reply to, so it removes your address
+     both with ``no`` and with ``never``. Thank-you notes do not follow
+     this setting, see :term:`b4.ty-me-too`.
 
      Default: ``yes``
 
      .. versionadded:: v0.16
+
+     .. versionchanged:: v0.17
+        Replies sent from ``b4 review`` and ``b4 bugs`` follow this
+        setting as well, and ``never`` is a new value.
 
    :term:`b4.send-prefixes`
      Extra prefixes to add to ``[PATCH]`` (e.g. ``RFC mydrv``).

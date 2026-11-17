@@ -1,5 +1,6 @@
 import argparse
 import email.message
+import email.utils
 import importlib.util
 import json
 import logging
@@ -2131,6 +2132,44 @@ class TestBuildReviewEmail:
         assert msg is not None
         assert msg['To'] == 'custom@example.com'
         assert msg['Cc'] == 'other@example.com'
+
+    @pytest.mark.parametrize(
+        'conf,cc,edited,expected',
+        [
+            # Default: reviewers reading from the list get their own copy
+            ('yes', '', False, ['maintainer@example.com', 'reviewer@example.com']),
+            # Already a recipient under different case: no duplicate
+            (
+                'yes',
+                'REVIEWER@example.com',
+                False,
+                ['maintainer@example.com', 'REVIEWER@example.com'],
+            ),
+            ('no', '', False, ['maintainer@example.com']),
+            # "never" drops us even when the original included us
+            ('never', 'REVIEWER@example.com', False, ['maintainer@example.com']),
+            # Hand-edited recipients are final, we must not add to them
+            ('yes', 'other@example.com', True, ['other@example.com']),
+            ('never', 'reviewer@example.com', True, ['reviewer@example.com']),
+        ],
+    )
+    def test_send_me_too(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        conf: str,
+        cc: str,
+        edited: bool,
+        expected: List[str],
+    ) -> None:
+        """b4.send-me-too adds, keeps or drops the reviewer, unless they picked recipients."""
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'send-me-too', conf)
+        series = self._make_series(cc=cc)
+        if edited:
+            series['header-info']['tocc-edited'] = True
+        msg = self._build(series)
+        assert msg is not None
+        ccs = [addr for _, addr in email.utils.getaddresses(msg.get_all('cc', []))]
+        assert ccs == expected
 
 
 # -- Tests for get_reference_message() ---------------------------------------
