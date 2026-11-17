@@ -4308,7 +4308,10 @@ class LoreAttestorPatatt(LoreAttestor):
 
 
 def _run_command(
-    cmdargs: List[str], stdin: Optional[bytes] = None, rundir: Optional[str] = None
+    cmdargs: List[str],
+    stdin: Optional[bytes] = None,
+    rundir: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, bytes, bytes]:
     if rundir:
         logger.debug('Running in %s', rundir)
@@ -4324,6 +4327,7 @@ def _run_command(
         stdin=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=rundir,
+        env=env,
     )
     (output, error) = sp.communicate(input=stdin)
 
@@ -4355,6 +4359,7 @@ def git_run_command(
     logstderr: bool = ...,
     decode: Literal[False],
     rundir: Optional[str] = ...,
+    env: Optional[Dict[str, str]] = ...,
 ) -> Tuple[int, bytes]: ...
 
 
@@ -4367,6 +4372,7 @@ def git_run_command(
     logstderr: bool = ...,
     decode: Literal[True] = ...,
     rundir: Optional[str] = ...,
+    env: Optional[Dict[str, str]] = ...,
 ) -> Tuple[int, str]: ...
 
 
@@ -4378,6 +4384,7 @@ def git_run_command(
     logstderr: bool = False,
     decode: bool = True,
     rundir: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, Union[str, bytes]]:
     cmdargs = ['git', '--no-pager']
     if gitdir:
@@ -4403,7 +4410,7 @@ def git_run_command(
 
     cmdargs += args
 
-    ecode, out, err = _run_command(cmdargs, stdin=stdin, rundir=rundir)
+    ecode, out, err = _run_command(cmdargs, stdin=stdin, rundir=rundir, env=env)
 
     U = TypeVar('U', str, bytes)
 
@@ -4428,10 +4435,25 @@ def git_check_minimal_version(min_version: str) -> bool:
 
 
 def git_credential_fill(
-    gitdir: Optional[str], protocol: str, host: str, username: str
+    gitdir: Optional[str],
+    protocol: str,
+    host: str,
+    username: str,
+    terminal_prompt: bool = True,
 ) -> Optional[str]:
+    """Ask the git credential helpers for a password.
+
+    When no helper answers, git asks the user on the terminal. Turn
+    *terminal_prompt* off where that prompt would do harm, such as in a
+    lookup that can run while a TUI owns the terminal.
+    """
     stdin = f'protocol={protocol}\nhost={host}\nusername={username}\n'.encode()
-    ecode, out = git_run_command(gitdir, args=['credential', 'fill'], stdin=stdin)
+    env: Optional[Dict[str, str]] = None
+    if not terminal_prompt:
+        env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
+    ecode, out = git_run_command(
+        gitdir, args=['credential', 'fill'], stdin=stdin, env=env
+    )
     if ecode == 0:
         for line in out.splitlines():
             if not line.startswith('password='):
@@ -6446,6 +6468,10 @@ def get_pw_key(config: Optional[ConfigDictT] = None) -> str:
     config.  The result is cached for the life of the process, so the
     helpers are asked at most once.  Returns an empty string when no key is
     configured or the lookup fails.
+
+    Git never gets to prompt for the key on the terminal: an API key is not
+    something to type on every run, and the lookup can happen while a TUI
+    owns the terminal.
     """
     if config is None:
         config = get_main_config()
@@ -6463,7 +6489,11 @@ def get_pw_key(config: Optional[ConfigDictT] = None) -> str:
     if parsed.scheme and parsed.netloc:
         logger.debug('Asking git credential helpers for the patchwork key')
         gc_pass = git_credential_fill(
-            None, protocol=parsed.scheme, host=parsed.netloc, username=pwuser
+            None,
+            protocol=parsed.scheme,
+            host=parsed.netloc,
+            username=pwuser,
+            terminal_prompt=False,
         )
         pwkey = gc_pass or ''
         if not pwkey:

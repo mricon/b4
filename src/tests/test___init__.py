@@ -3029,6 +3029,25 @@ class TestGetPwKey:
             assert b4.get_pw_key(config) == ''
         assert 'Could not parse pw-url' in caplog.text
 
+    def test_never_prompts_on_the_terminal(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        """The lookup can run while a TUI owns the terminal, where nobody can
+        see or answer git's own password prompt."""
+        monkeypatch.setenv('GIT_TERMINAL_PROMPT', '1')
+        seen = tmp_path / 'prompt'
+        self._set_helper(
+            monkeypatch,
+            tmp_path,
+            f'echo "$GIT_TERMINAL_PROMPT" > {seen}\necho password=key',
+        )
+        config: b4.ConfigDictT = {
+            'pw-user': 'me',
+            'pw-url': 'https://pw.example.org/',
+        }
+        assert b4.get_pw_key(config) == 'key'
+        assert seen.read_text().strip() == '0'
+
     def test_ignored_in_worktree_config(self, gitdir: str) -> None:
         """A cloned tree's .b4-config must not get to ask for credentials."""
         wtcfg = pathlib.Path(gitdir) / '.b4-config'
