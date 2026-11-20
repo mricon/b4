@@ -22,11 +22,28 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import pygit2
-from pygit2.enums import SortMode
+from pygit2.enums import ReferenceType, SortMode
 
 import b4
 
 logger = b4.logger
+
+
+class RewriteTargetMovedError(RuntimeError):
+    """Raised when the ref being rewritten moved while the rewrite ran.
+
+    Publishing the rewritten tip anyway would silently discard whatever
+    moved the ref, so nothing is published and the newer history stays.
+    """
+
+    def __init__(self, refname: str, expected: str, found: Optional[str]) -> None:
+        self.refname = refname
+        self.expected = expected
+        self.found = found
+        super().__init__(
+            '%s moved from %s to %s during the rewrite; nothing was changed'
+            % (refname, expected[:12], found[:12] if found else 'elsewhere')
+        )
 
 
 class ThirdpartyCommitterError(RuntimeError):
@@ -99,6 +116,76 @@ def _current_committer() -> pygit2.Signature:
     return pygit2.Signature(str(name), str(email))
 
 
+def _get_rewrite_target(
+    repo: pygit2.Repository, backup_ref: Optional[str]
+) -> Tuple[str, str]:
+    """Return ``(refname, backup_refname)`` for the ref that HEAD names.
+
+    On a branch, that is the branch, backed up to ``refs/original/<branch>``
+    unless *backup_ref* says otherwise. A detached HEAD is rewritten in
+    place and stays detached. It has no name to derive a backup from, so
+    the caller must name one.
+    """
+    if repo.head_is_detached:
+        if not backup_ref:
+            raise RuntimeError('Rewriting a detached HEAD needs an explicit backup ref')
+        return 'HEAD', backup_ref
+    refname = repo.head.name
+    if backup_ref:
+        return refname, backup_ref
+    return refname, 'refs/original/' + refname.removeprefix('refs/heads/')
+
+
+def _check_target(repo: pygit2.Repository, refname: str, expected: pygit2.Oid) -> None:
+    ref = repo.references.get(refname)
+    if ref is None:
+        raise RewriteTargetMovedError(refname, str(expected), None)
+    if ref.type != ReferenceType.DIRECT:
+        # A detached HEAD that now names a branch was checked out elsewhere
+        raise RewriteTargetMovedError(refname, str(expected), None)
+    if ref.target != expected:
+        raise RewriteTargetMovedError(refname, str(expected), str(ref.target))
+
+
+def _can_lock_refs(repo: pygit2.Repository) -> bool:
+    # Reference transactions are new in pygit2 1.19
+    return hasattr(repo, 'transaction')
+
+
+def _publish_tip(
+    repo: pygit2.Repository,
+    refname: str,
+    backup_name: str,
+    old_tip: pygit2.Oid,
+    new_tip: pygit2.Oid,
+    reflog_msg: str,
+) -> None:
+    """Back up *old_tip* and move *refname* to *new_tip*, if it is unmoved.
+
+    With reference transactions, both refs stay locked from the check to
+    the update, so no other git process can move them in between. Older
+    pygit2 has no locking, which leaves a short window between checking
+    the ref and updating it.
+    """
+    backup_msg = 'b4: replace backup' if backup_name in repo.references else None
+    if _can_lock_refs(repo):
+        with repo.transaction() as txn:
+            txn.lock_ref(refname)
+            txn.lock_ref(backup_name)
+            _check_target(repo, refname, old_tip)
+            txn.set_target(backup_name, old_tip, message=backup_msg)
+            txn.set_target(refname, new_tip, message=reflog_msg)
+        return
+
+    _check_target(repo, refname, old_tip)
+    if backup_msg:
+        logger.debug('Overwriting existing %s', backup_name)
+        repo.references[backup_name].set_target(old_tip, backup_msg)
+    else:
+        repo.references.create(backup_name, old_tip)
+    repo.references[refname].set_target(new_tip, reflog_msg)
+
+
 def rewrite_commits(
     edit_map: Dict[str, str],
     start: str,
@@ -108,6 +195,7 @@ def rewrite_commits(
     gitdir: Optional[str] = None,
     force: bool = False,
     allow_thirdparty_committer: bool = False,
+    backup_ref: Optional[str] = None,
 ) -> Dict[str, str]:
     """Rewrite commits in ``(start, end]`` using pygit2.
 
@@ -135,8 +223,14 @@ def rewrite_commits(
     the rewrite range are migrated to the new commit OIDs with note bytes
     preserved verbatim.
 
-    Creates ``refs/original/<branch>`` as a backup before updating the live
-    branch ref. Appends a reflog entry on the branch ref using *reflog_msg*.
+    The ref that HEAD names is the one rewritten, and *end* must be its tip.
+    On a branch, that is the branch, and a detached HEAD is moved in place
+    and stays detached. The old tip is saved to a backup ref first, replacing
+    any earlier backup: ``refs/original/<branch>`` on a branch, *backup_ref*
+    when it is given, which is required on a detached HEAD. If the ref no
+    longer points at the old tip when the new one is ready,
+    :class:`RewriteTargetMovedError` is raised and no ref is changed.
+    Appends a reflog entry on the rewritten ref using *reflog_msg*.
     Calls ``b4.ez.run_rewrite_hook('pre')`` before any mutation and
     ``run_rewrite_hook('post')`` after. Both hooks are SKIPPED on the
     no-op fast path.
@@ -151,20 +245,23 @@ def rewrite_commits(
     # Lazy import to avoid a cycle: ez.py imports from this module.
     from b4.ez import run_rewrite_hook
 
-    run_rewrite_hook('pre')
-
     if gitdir is None:
         gd = b4.git_get_gitdir()
         if not isinstance(gd, str):
             raise RuntimeError('Unable to locate gitdir for rewrite')
         gitdir = gd
     repo = pygit2.Repository(gitdir)
-
-    head_ref = repo.head  # raises if HEAD is detached; callers guard this
-    branch_refname = head_ref.name
-
+    target_refname, backup_name = _get_rewrite_target(repo, backup_ref)
+    old_tip = repo.revparse_single('HEAD').id
     start_oid = repo.revparse_single(start).id
     end_oid = repo.revparse_single(end).id
+    if end_oid != old_tip:
+        raise RuntimeError(
+            '%s is not the tip of %s; rewriting it would drop the commits above it'
+            % (end, target_refname)
+        )
+
+    run_rewrite_hook('pre')
 
     walker = repo.walk(end_oid, SortMode.TOPOLOGICAL | SortMode.REVERSE)
     walker.hide(start_oid)
@@ -226,19 +323,13 @@ def rewrite_commits(
 
     assert new_tip_oid is not None  # old_commits was non-empty
 
-    # Backup the original branch tip, then move the branch to the new tip.
-    short = branch_refname
-    if short.startswith('refs/heads/'):
-        short = short[len('refs/heads/') :]
-    backup_name = f'refs/original/{short}'
-    old_tip = head_ref.target
-    if backup_name in repo.references:
-        logger.debug('Overwriting existing %s', backup_name)
-        repo.references[backup_name].set_target(old_tip, 'b4: replace backup')
-    else:
-        repo.references.create(backup_name, old_tip)
-
-    repo.references[branch_refname].set_target(new_tip_oid, reflog_msg)
+    try:
+        _publish_tip(
+            repo, target_refname, backup_name, old_tip, new_tip_oid, reflog_msg
+        )
+    except RewriteTargetMovedError:
+        run_rewrite_hook('post')
+        raise
 
     # Migrate notes (no-op fast path when there were none).
     if notes_snap:

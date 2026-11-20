@@ -260,6 +260,195 @@ class TestRewriteCore:
         )
 
 
+# -- Detached HEAD and moved targets ------------------------------------------
+
+BACKUP = 'refs/original/b4/20260101-series-0123456789ab'
+
+
+class TestRewriteTarget:
+    def test_detached_head_rewritten_in_place(
+        self, bare_repo: pygit2.Repository
+    ) -> None:
+        """pygit2 reports a detached HEAD as a direct ref named HEAD; it is
+        moved in place, stays detached, and leaves the branch alone."""
+        oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
+        bare_repo.set_head(oids[-1])
+        assert bare_repo.head_is_detached
+        bare_repo.create_note('the note body', SIG, SIG, str(oids[1]))
+        with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
+            result = b4._rewrite.rewrite_commits(
+                edit_map={str(oids[1]): 'b (edited)\n'},
+                start=str(oids[0]),
+                reflog_msg='b4: detached rewrite',
+                backup_ref=BACKUP,
+            )
+        assert bare_repo.head_is_detached
+        new_tip = _commit(bare_repo, bare_repo.head.target)
+        assert str(new_tip.id) == result[str(oids[2])]
+        assert new_tip.tree_id == _commit(bare_repo, oids[2]).tree_id
+        assert new_tip.author.email == SIG.email
+        assert new_tip.committer.name == CURRENT_USER['name']
+        assert _commit(bare_repo, result[str(oids[1])]).message == 'b (edited)\n'
+        assert bare_repo.lookup_note(result[str(oids[1])]).message == 'the note body'
+        # The branch HEAD came from is someone else's business now.
+        assert bare_repo.references[BRANCH].target == oids[-1]
+        assert bare_repo.references[BACKUP].target == oids[-1]
+        assert 'refs/original/HEAD' not in bare_repo.references
+        assert 'refs/original/master' not in bare_repo.references
+        entries = list(bare_repo.references['HEAD'].log())
+        assert entries[0].message == 'b4: detached rewrite'
+
+    def test_detached_head_needs_backup_ref(self, bare_repo: pygit2.Repository) -> None:
+        oids = _seed(bare_repo, ['a\n', 'b\n'])
+        bare_repo.set_head(oids[-1])
+        with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook') as hook:
+            with pytest.raises(RuntimeError, match='explicit backup ref'):
+                b4._rewrite.rewrite_commits(
+                    edit_map={str(oids[1]): 'b!\n'}, start=str(oids[0])
+                )
+        hook.assert_not_called()
+        assert bare_repo.head.target == oids[-1]
+        assert not [r for r in bare_repo.references if r.startswith('refs/original/')]
+
+    def test_backup_ref_replaces_earlier_backup(
+        self, bare_repo: pygit2.Repository
+    ) -> None:
+        oids = _seed(bare_repo, ['a\n', 'b\n'])
+        bare_repo.set_head(oids[-1])
+        for msg in ('b1\n', 'b2\n'):
+            before = bare_repo.head.target
+            with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
+                b4._rewrite.rewrite_commits(
+                    edit_map={str(before): msg}, start=str(oids[0]), backup_ref=BACKUP
+                )
+            assert bare_repo.references[BACKUP].target == before
+
+    @pytest.mark.parametrize('locking', [True, False])
+    @pytest.mark.parametrize('detached', [True, False])
+    def test_moved_target_is_not_overwritten(
+        self, bare_repo: pygit2.Repository, locking: bool, detached: bool
+    ) -> None:
+        """Whatever moved the ref while the commits were rewritten wins; the
+        rewrite publishes nothing, not even a backup."""
+        if locking and not hasattr(bare_repo, 'transaction'):
+            pytest.skip('pygit2 before 1.19 has no reference transactions')
+        oids = _seed(bare_repo, ['a\n', 'b\n'])
+        newer = _mkcommit(bare_repo, 'newer\n', oids[-1], b'newer\n')
+        refname = BRANCH
+        if detached:
+            bare_repo.set_head(oids[-1])
+            refname = 'HEAD'
+        collect = b4._rewrite._collect_notes
+
+        def _move_then_collect(repo: pygit2.Repository, hexes: Any) -> Any:
+            repo.references[refname].set_target(newer, 'moved meanwhile')
+            return collect(repo, hexes)
+
+        with (
+            _patch_gitdir(bare_repo),
+            patch('b4.ez.run_rewrite_hook') as hook,
+            patch('b4._rewrite._collect_notes', side_effect=_move_then_collect),
+            patch('b4._rewrite._can_lock_refs', return_value=locking),
+        ):
+            with pytest.raises(b4._rewrite.RewriteTargetMovedError) as ei:
+                b4._rewrite.rewrite_commits(
+                    edit_map={str(oids[1]): 'b!\n'},
+                    start=str(oids[0]),
+                    backup_ref=BACKUP if detached else None,
+                )
+        assert ei.value.refname == refname
+        assert ei.value.found == str(newer)
+        assert bare_repo.references[refname].target == newer
+        assert bare_repo.head_is_detached == detached
+        assert not [r for r in bare_repo.references if r.startswith('refs/original/')]
+        # The pre hook ran, so the post hook must too.
+        assert [c.args for c in hook.call_args_list] == [('pre',), ('post',)]
+
+    def test_detached_head_checked_out_to_branch_is_not_written_through(
+        self, bare_repo: pygit2.Repository
+    ) -> None:
+        """A detached HEAD that now names a branch was checked out elsewhere;
+        writing to HEAD would move that branch."""
+        oids = _seed(bare_repo, ['a\n', 'b\n'])
+        bare_repo.set_head(oids[-1])
+        collect = b4._rewrite._collect_notes
+
+        def _attach_then_collect(repo: pygit2.Repository, hexes: Any) -> Any:
+            repo.set_head(BRANCH)
+            return collect(repo, hexes)
+
+        with (
+            _patch_gitdir(bare_repo),
+            patch('b4.ez.run_rewrite_hook'),
+            patch('b4._rewrite._collect_notes', side_effect=_attach_then_collect),
+        ):
+            with pytest.raises(b4._rewrite.RewriteTargetMovedError):
+                b4._rewrite.rewrite_commits(
+                    edit_map={str(oids[1]): 'b!\n'},
+                    start=str(oids[0]),
+                    backup_ref=BACKUP,
+                )
+        assert bare_repo.references[BRANCH].target == oids[-1]
+
+    def test_end_must_be_the_tip(self, bare_repo: pygit2.Repository) -> None:
+        oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
+        with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook') as hook:
+            with pytest.raises(RuntimeError, match='not the tip'):
+                b4._rewrite.rewrite_commits(
+                    edit_map={str(oids[1]): 'b!\n'},
+                    start=str(oids[0]),
+                    end=str(oids[1]),
+                )
+        hook.assert_not_called()
+        assert bare_repo.references[BRANCH].target == oids[-1]
+
+    def test_linked_worktree_head_only(self, tmp_path: Path) -> None:
+        """A detached HEAD lives in its worktree's git dir; rewriting it
+        must not move the main worktree's HEAD or any branch."""
+        main = str(tmp_path / 'main')
+        linked = str(tmp_path / 'linked')
+        ecode, out = b4.git_run_command(None, ['init', '-q', '-b', 'master', main])
+        assert ecode == 0, out
+        for subj in ('one', 'two', 'three'):
+            ecode, out = b4.git_run_command(
+                main,
+                [
+                    '-c',
+                    f'user.name={SIG.name}',
+                    '-c',
+                    f'user.email={SIG.email}',
+                    'commit',
+                    '-q',
+                    '--allow-empty',
+                    '-m',
+                    subj,
+                ],
+            )
+            assert ecode == 0, out
+        ecode, out = b4.git_run_command(
+            main, ['worktree', 'add', '-q', '--detach', linked, 'master']
+        )
+        assert ecode == 0, out
+        wt_gitdir = b4.git_run_command(linked, ['rev-parse', '--absolute-git-dir'])[1]
+        assert isinstance(wt_gitdir, str)
+        tip = b4.git_revparse_obj('master', gitdir=main)
+
+        with (
+            patch('b4.git_get_gitdir', return_value=wt_gitdir.strip()),
+            patch('b4.ez.run_rewrite_hook'),
+        ):
+            result = b4._rewrite.rewrite_commits(
+                edit_map={tip: 'three (edited)\n'},
+                start=f'{tip}~1',
+                backup_ref=BACKUP,
+            )
+        assert b4.git_revparse_obj('HEAD', gitdir=linked) == result[tip]
+        assert b4.git_get_current_branch(linked) is None
+        assert b4.git_get_current_branch(main) == 'master'
+        assert b4.git_revparse_obj('HEAD', gitdir=main) == tip
+        assert b4.git_revparse_obj(BACKUP, gitdir=main) == tip
+
+
 # -- Notes migration ---------------------------------------------------------
 
 

@@ -166,6 +166,67 @@ forked from ``master``, you can enroll it with b4::
 Once that completes, you should be able to edit the cover letter and use
 all other b4 contributor-oriented commands.
 
+.. _prep_detached:
+
+Working on a detached HEAD
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: v0.17
+
+Some tools manage the checkout themselves and leave ``HEAD`` detached
+instead of on a branch, and you may also be working on a detached
+``HEAD`` yourself, for example after ``git checkout --detach``. b4 can
+work on a series there without creating a branch for it. ``HEAD`` is
+the tip of the series, and the series starts at the cover letter commit
+below it.
+
+To enroll the commits at ``HEAD``, pass the base of the series
+explicitly, since a detached ``HEAD`` has no upstream branch to fall
+back on::
+
+    b4 prep -e origin/master
+
+The base can be a branch, which is forked from the same way as when
+enrolling a branch, or a tag or a commit, which has to be an ancestor of
+``HEAD``. b4 names the series after the subject of its first patch.
+Enrolling refuses a base it cannot use, history that contains merges,
+and history that already has a b4 cover letter, before it changes
+anything.
+
+To insert the cover letter, b4 resets ``HEAD`` to the base, commits the
+cover letter, and cherry-picks the series on top of it. Before that, it
+saves the original ``HEAD`` as ``refs/original/b4/<change-id>``. If the
+cherry-pick fails, b4 leaves it for you to resolve, and tells you how to
+go back to the saved commits instead::
+
+    git cherry-pick --abort
+    git checkout --detach refs/original/b4/<change-id>
+
+Once enrolled, the series works with the usual commands: editing the
+cover letter and dependencies, ``--check``, ``--format-patch``, ``b4
+send``, ``b4 trailers -u``, and ``--claim``. Things to keep in mind:
+
+* only the ``commit`` cover letter strategy works without a branch,
+  because the other strategies keep the cover letter or the strategy
+  itself in the branch configuration; b4 refuses to work on a detached
+  ``HEAD`` when :term:`b4.prep-cover-strategy` is set to another one, and
+  when the cover letter commit at ``HEAD`` was made with another one
+* b4 still requires a clean working tree, and refuses to change the
+  series while a rebase, merge, cherry-pick, revert or ``git am`` is in
+  progress; commands that only read the series keep working
+* when b4 rewrites the series, for example to update the cover letter
+  or add trailers, it moves only ``HEAD``, which stays detached; the
+  previous ``HEAD`` is saved as ``refs/original/b4/<change-id>``,
+  replacing the previous backup of the series
+* b4 does not move any other refs, so a branch, a bookmark, or another
+  tool's idea of the current commit still points at the history from
+  before the rewrite; update them yourself if they should follow
+* if ``HEAD`` moves to another commit while you are editing the cover
+  letter or the dependencies, b4 refuses to store the result, and saves
+  your text in a temporary file instead
+* ``b4 prep -n`` still creates a new branch, and ``--cleanup`` only
+  works on branches
+
 Creating a branch from a sent series
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 If you have previously sent a patch series, you can create your new
@@ -676,7 +737,8 @@ modifying defaults for some of these flags.
 
 ``--claim [BRANCH]``
   Re-stamps the cover letter and every patch on a prep branch under
-  your current git identity (defaults to the current branch). B4
+  your current git identity (defaults to the current branch, or the
+  series at a detached ``HEAD``). B4
   refuses to rewrite history containing commits committed by someone
   other than you — for example when applying trailers to a series
   enrolled from another maintainer's tree, or after you changed your
@@ -700,7 +762,10 @@ modifying defaults for some of these flags.
 
 ``-e ENROLL_BASE, --enroll ENROLL_BASE``
   Enrolls your current branch to be b4-prep managed. Requires the name
-  of the branch to use as the fork-point tracking base.
+  of the branch to use as the fork-point tracking base. On a detached
+  ``HEAD``, enrolls the commits at ``HEAD`` without creating a branch;
+  this requires an explicit base, which can be a branch, a tag, or a
+  commit. See :ref:`prep_detached`.
 
 ``--range-diff-opts RANGE_DIFF_OPTS``
   Additional arguments passed to ``git range-diff`` when comparing series with
