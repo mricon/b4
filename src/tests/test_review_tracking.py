@@ -1,4 +1,5 @@
 import argparse
+import copy
 import datetime
 import io
 import logging
@@ -1967,6 +1968,134 @@ class TestPatchState:
         assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
         assert b4.review._toggle_patch_done(target, self._USERCFG) == 'draft'
         assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+
+class TestDiscardReviewDraft:
+    """Discarding drops the current maintainer's unsent draft and nothing else."""
+
+    _EMAIL = 'reviewer@example.com'
+    _USERCFG: b4.ConfigDictT = {'email': _EMAIL, 'name': 'Test Reviewer'}
+
+    def _target(self, review: Dict[str, Any]) -> Dict[str, Any]:
+        return {'reviews': {self._EMAIL: {'name': 'Test Reviewer', **review}}}
+
+    @pytest.mark.parametrize(
+        'review',
+        [
+            {
+                'reply': 'Please fix this.',
+                'comments': [{'path': 'a.c', 'line': 3, 'text': 'Why?'}],
+                'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
+                'patch-state': 'draft',
+            },
+            {'reply': 'Looks good.', 'patch-state': 'done'},
+            {'patch-state': 'skip'},
+        ],
+    )
+    def test_unsent_draft_is_removed_and_cleaned_up(
+        self, review: Dict[str, Any]
+    ) -> None:
+        target = self._target(review)
+
+        assert b4.review._discard_review_draft(target, self._USERCFG)
+        assert 'reviews' not in target
+
+    @pytest.mark.parametrize(
+        'review',
+        [
+            {'note': 'Keep this', 'sent-revision': 2, 'patch-state': 'unchanged'},
+            # A send with nothing added since leaves nothing to discard.
+            {
+                'sent-revision': 1,
+                'sent': {'trailers': ['Acked-by: T <reviewer@example.com>']},
+                'trailers': ['Acked-by: T <reviewer@example.com>'],
+                'comments': [{'path': 'a.c', 'line': 1, 'text': 'x', 'sent': True}],
+            },
+        ],
+    )
+    def test_nothing_to_discard_is_a_strict_noop(self, review: Dict[str, Any]) -> None:
+        target = self._target(review)
+        before = copy.deepcopy(target)
+
+        assert not b4.review._has_review_draft(target['reviews'][self._EMAIL])
+        assert not b4.review._discard_review_draft(target, self._USERCFG)
+        assert target == before
+
+    def test_unchanged_state_becomes_visible_after_draft_removal(self) -> None:
+        target = self._target(
+            {
+                'patch-state': 'unchanged',
+                'reply': 'Carried-over draft text',
+                'comments': [{'path': 'a.c', 'line': 2, 'text': 'old'}],
+            }
+        )
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+        assert b4.review._discard_review_draft(target, self._USERCFG)
+        assert target['reviews'][self._EMAIL]['patch-state'] == 'unchanged'
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'unchanged'
+
+    def test_sent_review_keeps_what_was_sent(self) -> None:
+        # Follow-up sends and the prior-review summary build on the sent
+        # parts, so only what was added since the send may go.
+        nack = 'Nacked-by: Test Reviewer <reviewer@example.com>'
+        ack = 'Acked-by: Test Reviewer <reviewer@example.com>'
+        sent_comment = {'path': 'a.c', 'line': 1, 'text': 'sent', 'sent': True}
+        sent = {'trailers': [nack], 'replies': ['First reply']}
+        target = self._target(
+            {
+                'sent-revision': 1,
+                'sent': copy.deepcopy(sent),
+                'reply': 'Second thoughts',
+                'comments': [sent_comment, {'path': 'a.c', 'line': 5, 'text': 'new'}],
+                # Adding an approval after a send takes the sent NACK back.
+                'trailers': [ack],
+            }
+        )
+
+        assert b4.review._discard_review_draft(target, self._USERCFG)
+        review = target['reviews'][self._EMAIL]
+        assert review == {
+            'name': 'Test Reviewer',
+            'sent-revision': 1,
+            'sent': sent,
+            'comments': [sent_comment],
+            'trailers': [nack],
+        }
+        assert not b4.review._has_unsent(review)
+
+    def test_everything_outside_my_draft_survives(self) -> None:
+        external = {
+            'name': 'Other Reviewer',
+            'comments': [{'path': 'a.c', 'line': 1, 'text': 'external'}],
+            'provenance': 'https://example.com/review',
+        }
+        followups = [{'msgid': 'followup@example.com', 'body': b'raw bytes'}]
+        header_info = {'msgid': 'patch@example.com', 'to': 'list@example.com'}
+        target = self._target(
+            {
+                'reply': 'Discard me',
+                'note': 'Private reminder',
+                'future-field': {'opaque': True},
+            }
+        )
+        target['reviews']['other@example.com'] = external
+        target['followups'] = followups
+        target['header-info'] = header_info
+
+        assert b4.review._discard_review_draft(target, self._USERCFG)
+        assert target == {
+            'reviews': {
+                self._EMAIL: {
+                    'name': 'Test Reviewer',
+                    'note': 'Private reminder',
+                    'future-field': {'opaque': True},
+                },
+                'other@example.com': external,
+            },
+            'followups': followups,
+            'header-info': header_info,
+        }
 
 
 class TestBuildReplyFromComments:

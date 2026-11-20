@@ -326,6 +326,7 @@ def _review_help_lines(has_agent: bool = False) -> List[str]:
         '  [bold]t[/bold]         Trailers (↑↓ navigate, Space toggle, Enter save)\n',
         '  [bold]r[/bold]         Open $EDITOR for reply\n',
         '  [bold]T[/bold]         Edit To/Cc recipients\n',
+        '  [bold]R[/bold]         Discard unsent review draft\n',
         '  [bold]Ctrl-y[/bold]    Send review emails\n',
         '  [bold]e[/bold]         Toggle email mode\n',
         '\n',

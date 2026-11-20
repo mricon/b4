@@ -210,7 +210,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     # Actions visible only in review mode
     _REVIEW_ACTIONS = frozenset({'followups', 'agent'})
     # Actions visible only in email mode
-    _EMAIL_ACTIONS = frozenset({'edit_tocc', 'send'})
+    _EMAIL_ACTIONS = frozenset({'discard_review', 'edit_tocc', 'send'})
 
     BINDING_GROUPS = {
         'trailer': 'Review',
@@ -223,6 +223,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         'patch_skip': 'Review',
         'check': 'Review',
         'edit_tocc': 'Review',
+        'discard_review': 'Review',
         'send': 'Review',
         'toggle_preview': 'App',
         'suspend': 'App',
@@ -252,6 +253,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings
         Binding('T', 'edit_tocc', 'edit to/cc', key_display='T'),
+        Binding('R', 'discard_review', 'discard draft', key_display='R'),
         Binding('ctrl+y', 'send', 'send'),
         # Legacy alias for maintainers used to the old binding
         Binding('S', 'send', 'send', key_display='S', show=False),
@@ -1477,6 +1479,66 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self.notify(f'{len(new_comments)} comments across {len(files)} files')
         else:
             self.notify('Reply saved')
+
+    def action_discard_review(self) -> None:
+        """Confirm and discard the selected patch or cover review draft."""
+        if not self._preview_mode:
+            return
+        target = self._get_current_review_target()
+        if not target:
+            return
+
+        review = b4.review._get_my_review(target, self._usercfg)
+        if not b4.review._has_review_draft(review):
+            self.notify('No unsent review draft to discard')
+            return
+
+        if self._selected_idx == 0:
+            target_kind = 'cover letter'
+            subject = self._cover_subject_clean or str(self._series.get('subject', ''))
+        else:
+            target_kind = 'patch'
+            patch_idx = self._selected_idx - 1
+            subject = (
+                self._commit_subjects[patch_idx]
+                if patch_idx < len(self._commit_subjects)
+                else str(target.get('title', ''))
+            )
+
+        def _on_confirm(confirmed: Optional[bool]) -> None:
+            if not confirmed:
+                return
+            if not b4.review._discard_review_draft(target, self._usercfg):
+                return
+            saved = self._save_tracking()
+            self._refresh_patch_item(self._selected_idx)
+            self._show_content(self._selected_idx)
+            self.refresh_bindings()
+            if saved:
+                self.notify('Review draft discarded')
+            else:
+                self.notify(
+                    f'Draft discarded, but could not record it on {self._branch}',
+                    severity='warning',
+                )
+
+        self.push_screen(
+            ConfirmScreen(
+                'Discard review draft?',
+                [
+                    f'Discard your unsent review draft for this {target_kind}?',
+                    '',
+                    'Your unsent reply, inline comments, trailers, and manual '
+                    'review state will be removed.',
+                    "What you already sent, private notes, and other reviewers' "
+                    'feedback are kept.',
+                    'This does not change the patch commit or recall sent mail.',
+                ],
+                border='$warning',
+                subject=subject,
+            ),
+            _on_confirm,
+        )
 
     def action_prior_review(self) -> None:
         """Show prior revision review context."""

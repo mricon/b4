@@ -463,6 +463,7 @@ asking for confirmation, because the series notes appear on every patch.
 Key         Action
 ==========  ============================================================
 ``T``       Edit To/Cc/Bcc recipients
+``R``       Discard the unsent review draft (with confirmation)
 ``Ctrl-y``  Send review emails (``S`` still works as a legacy alias)
 ``e``       Toggle email mode
 ==========  ============================================================
@@ -498,6 +499,14 @@ bottom-right corner. Use ``.`` and ``,`` to jump between comments.
 
 Press ``r`` again to re-open the editor with your existing comments
 interleaved into the quoted content for further editing.
+
+To throw away a draft you have not sent yet, enter email preview mode with
+``e``, select the patch or cover letter, press ``R``, and confirm. Your
+unsent reply, inline comments, trailers, and manual review state are
+removed, and the next ``r`` starts again from the original quoted content.
+B4 keeps what you already sent, your private notes, and feedback from other
+reviewers. The patch itself does not change, and sent mail cannot be
+recalled.
 
 When you send review emails, b4 automatically builds a standard
 quoted-reply for each patch: only hunks that contain comments are

@@ -1040,6 +1040,48 @@ def _cleanup_review(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> None:
         del target['reviews']
 
 
+def _has_discardable_review_state(review: Dict[str, Any]) -> bool:
+    """Return whether *review* has manual state that belongs to its draft."""
+    return review.get('patch-state') in ('done', 'draft', 'skip')
+
+
+def _has_review_draft(review: Dict[str, Any]) -> bool:
+    """Return whether _discard_review_draft() would remove anything from *review*."""
+    return _has_unsent(review) or _has_discardable_review_state(review)
+
+
+def _discard_review_draft(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> bool:
+    """Discard the current user's unsent draft and manual patch state.
+
+    The review goes back to what was last sent, because follow-up sends and
+    the prior-review summary build on the sent comments and trailers.
+    Automatic revision-upgrade state, private notes, and unrecognized
+    fields are kept as well.
+    """
+    review = _get_my_review(target, usercfg)
+    if not review or not _has_review_draft(review):
+        return False
+
+    # A sent reply has already moved to 'sent', so any reply left is unsent.
+    review.pop('reply', None)
+    # Restore the sent trailers rather than filter the current ones: adding
+    # an approval after a send drops a sent NACK, and discarding must bring
+    # it back.
+    sent_trailers = list(review.get('sent', {}).get('trailers', []))
+    sent_comments = [c for c in review.get('comments', []) if c.get('sent')]
+    for key, kept in (('trailers', sent_trailers), ('comments', sent_comments)):
+        if kept:
+            review[key] = kept
+        else:
+            review.pop(key, None)
+
+    if _has_discardable_review_state(review):
+        review.pop('patch-state', None)
+
+    _cleanup_review(target, usercfg)
+    return True
+
+
 _APPROVAL_TRAILER_KEYS = frozenset({'reviewed-by', 'acked-by'})
 _NACK_TRAILER_KEY = 'nacked-by'
 

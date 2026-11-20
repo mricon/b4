@@ -48,6 +48,13 @@ context above it back to your last note. B4 replaces the run with the same
 review helpers. The marker also works in follow-up quick replies, and existing
 breadcrumbs coalesce into its skipped-line count.
 
+**Discarding review drafts**
+
+In email preview mode, press ``R`` to throw away the unsent review draft of
+the selected patch or cover letter. The next reply edit starts again from the
+original quoted content. What you already sent, private notes, and other
+reviewers' feedback are kept.
+
 **Manual revision linking**
 
 When automatic revision discovery fails — for example, a submitter sent

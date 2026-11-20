@@ -559,6 +559,157 @@ class TestFollowupSnipMarker:
         assert send_mail.call_args.args[1] == [outgoing]
 
 
+class TestDiscardReviewDraft:
+    """The email preview exposes the core draft-discard operation."""
+
+    def _make_app(
+        self, gitdir: str, change_id: str, message: str = 'patch 1'
+    ) -> Tuple[ReviewApp, Dict[str, Any], str]:
+        branch, _shas = _create_review_branch_with_patches(gitdir, change_id, [message])
+        session = _build_session(gitdir, branch)
+        my_email = self._seed_patch_draft(session)
+        return ReviewApp(session), session, my_email
+
+    @staticmethod
+    def _seed_patch_draft(session: Dict[str, Any]) -> str:
+        my_email = str(session['usercfg']['email'])
+        session['patches'][0]['reviews'] = {
+            my_email: {
+                'name': str(session['usercfg']['name']),
+                'reply': 'Discarded maintainer prose',
+                'comments': [{'path': ':message', 'line': 0, 'text': 'mine'}],
+                'trailers': ['Reviewed-by: Maintainer <maintainer@example.com>'],
+                'patch-state': 'draft',
+            }
+        }
+        return my_email
+
+    @staticmethod
+    def _capture_confirm(app: ReviewApp, selected_idx: int = 1) -> Tuple[Any, Any]:
+        pushed: List[Tuple[Any, Any]] = []
+        app._selected_idx = selected_idx
+        app._preview_mode = True
+        with mock.patch.object(
+            app,
+            'push_screen',
+            side_effect=lambda screen, callback: pushed.append((screen, callback)),
+        ):
+            app.action_discard_review()
+        assert len(pushed) == 1
+        return pushed[0]
+
+    def test_gate_cancel_and_empty_target_do_not_mutate(self, gitdir: str) -> None:
+        app, _session, my_email = self._make_app(gitdir, 'discard-gate')
+        # Outside email mode the action is hidden and does nothing.
+        assert app.check_action('discard_review', ()) is False
+        with mock.patch.object(app, 'push_screen') as push:
+            app.action_discard_review()
+        push.assert_not_called()
+
+        screen, callback = self._capture_confirm(app)
+        assert app.check_action('discard_review', ()) is True
+        assert isinstance(screen, ConfirmScreen)
+        assert screen._border == '$warning'
+        assert any('recall sent mail' in line for line in screen._body)
+        with mock.patch.object(app, '_save_tracking') as save:
+            callback(False)
+        save.assert_not_called()
+        assert app._patches[0]['reviews'][my_email]['reply']
+
+        # The cover letter has no draft of its own, so there is nothing to
+        # confirm, even though the patch below it has one.
+        app._selected_idx = 0
+        with (
+            mock.patch.object(app, 'push_screen') as push,
+            mock.patch.object(app, 'notify') as notify,
+        ):
+            app.action_discard_review()
+        push.assert_not_called()
+        notify.assert_called_once_with('No unsent review draft to discard')
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('saved', 'message'),
+        [
+            (True, 'Review draft discarded'),
+            (False, 'Draft discarded, but could not record it on'),
+        ],
+    )
+    async def test_confirm_discards_saves_and_refreshes(
+        self, gitdir: str, saved: bool, message: str
+    ) -> None:
+        app, _session, my_email = self._make_app(gitdir, 'discard-confirm')
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._show_content(1)
+            await pilot.press('e')
+            await pilot.press('R')
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            with (
+                mock.patch.object(app, '_save_tracking', return_value=saved) as save,
+                mock.patch('b4.review._review._build_review_email') as build_email,
+            ):
+                await pilot.press('y')
+                await pilot.pause()
+
+            save.assert_called_once_with()
+            build_email.assert_not_called()
+            assert my_email not in app._patches[0].get('reviews', {})
+            patch_item = next(
+                child
+                for child in app.query_one('#patch-list').children
+                if isinstance(child, PatchListItem) and child.patch_idx == 1
+            )
+            assert patch_item._state == ''
+            assert any(
+                str(notification.message).startswith(message)
+                for notification in app._notifications
+            )
+
+    def test_next_reply_is_regenerated_with_external_scaffolding(
+        self, gitdir: str
+    ) -> None:
+        app, _session, _my_email = self._make_app(
+            gitdir, 'discard-regenerate', 'patch 1\n\nOriginal commit body'
+        )
+        app._patches[0]['reviews']['other@example.com'] = {
+            'name': 'Other Reviewer',
+            'comments': [{'path': ':message', 'line': 0, 'text': 'External feedback'}],
+            'provenance': 'https://example.com/external-review',
+        }
+        editor_seeds: List[str] = []
+
+        def fake_editor(
+            _app: ReviewApp, data: bytes, *args: Any, **kwargs: Any
+        ) -> bytes:
+            editor_seeds.append(data.decode())
+            return data
+
+        _screen, callback = self._capture_confirm(app)
+        with (
+            mock.patch.object(app, '_save_tracking'),
+            mock.patch.object(app, '_refresh_patch_item'),
+            mock.patch.object(app, '_show_content'),
+            mock.patch.object(app, 'refresh_bindings'),
+            mock.patch.object(app, 'notify'),
+        ):
+            callback(True)
+            with mock.patch(
+                'b4.review_tui._review_app.suspend_and_edit',
+                side_effect=fake_editor,
+            ):
+                app.action_edit_reply()
+
+        seed = editor_seeds[-1]
+        assert '> Original commit body' in seed
+        assert 'Discarded maintainer prose' not in seed
+        assert '| Other Reviewer <other@example.com>:' in seed
+        assert '| External feedback' in seed
+        assert '| via: https://example.com/external-review' in seed
+
+
 class TestReconcileAfterShell:
     """Tests for _reconcile_after_shell tracking fixup."""
 
