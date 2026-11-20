@@ -1276,33 +1276,66 @@ class TestRescanBranches:
         assert row['revision'] == 1
         conn.close()
 
-    def test_rescan_marks_gone(self, gitdir: str) -> None:
+    @pytest.mark.parametrize(
+        ('status', 'branch_sha', 'prior_sha', 'expected'),
+        [
+            ('reviewing', None, None, 'gone'),
+            ('waiting', 'deadbeef', None, 'gone'),
+            # A new series can be marked waiting before it is imported, so
+            # having no branch is its normal state, not a deleted branch.
+            ('waiting', None, None, 'waiting'),
+            # The branch of an older, archived revision says nothing about
+            # the revision that is waiting now.
+            ('waiting', None, 'deadbeef', 'waiting'),
+        ],
+    )
+    def test_rescan_marks_gone(
+        self,
+        gitdir: str,
+        status: str,
+        branch_sha: Optional[str],
+        prior_sha: Optional[str],
+        expected: str,
+    ) -> None:
         """Verify full rescan marks missing branches as 'gone'."""
         identifier = 'rescan-gone'
         conn = review_tracking.init_db(identifier)
-        # Add a series to DB with 'reviewing' status but no corresponding branch
-        review_tracking.add_series_to_db(
-            conn,
-            'gone-change',
-            1,
-            'Gone series',
-            'Author',
-            'a@example.com',
-            '2024-01-15T10:00:00+00:00',
-            'msgid@example.com',
-            3,
-        )
-        review_tracking.update_series_status(conn, 'gone-change', 'reviewing')
+        revision = 2 if prior_sha else 1
+        # Add each revision to the DB without a corresponding branch
+        for rev, rev_status, sha in (
+            (1, 'archived', prior_sha),
+            (revision, status, branch_sha),
+        ):
+            review_tracking.add_series_to_db(
+                conn,
+                'gone-change',
+                rev,
+                'Gone series',
+                'Author',
+                'a@example.com',
+                '2024-01-15T10:00:00+00:00',
+                f'msgid-v{rev}@example.com',
+                3,
+            )
+            review_tracking.update_series_status(
+                conn, 'gone-change', rev_status, revision=rev
+            )
+            conn.execute(
+                'UPDATE series SET branch_sha = ? WHERE change_id = ? AND revision = ?',
+                (sha, 'gone-change', rev),
+            )
+        conn.commit()
         conn.close()
 
         review_tracking.rescan_branches(identifier, gitdir)
 
         conn = review_tracking.get_db(identifier)
         cursor = conn.execute(
-            'SELECT status FROM series WHERE change_id = ?', ('gone-change',)
+            'SELECT status FROM series WHERE change_id = ? AND revision = ?',
+            ('gone-change', revision),
         )
         row = cursor.fetchone()
-        assert row['status'] == 'gone'
+        assert row['status'] == expected
         conn.close()
 
     def test_rescan_skips_mismatched_identifier(self, gitdir: str) -> None:
@@ -3980,12 +4013,13 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
             )
         return result, searches, check_att
 
-    def test_late_review_of_v1_lands_on_v2(self, gitdir: str) -> None:
+    @pytest.mark.parametrize('status', ['reviewing', 'waiting'])
+    def test_late_review_of_v1_lands_on_v2(self, gitdir: str, status: str) -> None:
         branch = create_review_branch(
             gitdir, 'cid-crs', tracking_data=self._tracking_data('cid-crs')
         )
 
-        result, searches, check_att = self._update('reviewing', topdir=gitdir)
+        result, searches, check_att = self._update(status, topdir=gitdir)
 
         assert result['error'] is None
         assert len(searches) == 1
@@ -4004,6 +4038,39 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
         assert result['error'] is None
         assert searches == []
         check_att.assert_called_once()
+
+    def test_waiting_without_branch_keeps_updating(self, gitdir: str) -> None:
+        conn = review_tracking.init_db('crs-proj')
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-crs',
+            2,
+            'thing: do things better',
+            'Author',
+            'author@example.com',
+            '2026-03-23T00:00:00+00:00',
+            'thing-v2-p0@example.com',
+            2,
+        )
+        review_tracking.update_series_status(conn, 'cid-crs', 'waiting')
+        conn.close()
+
+        result, searches, check_att = self._update('waiting', topdir=gitdir)
+
+        assert result['error'] is None
+        assert result['counts_updated'] is True
+        assert result['new_revisions'] == 1
+        assert searches == []
+        check_att.assert_called_once()
+        assert not b4.git_branch_exists(gitdir, 'b4/review/cid-crs')
+        conn = review_tracking.get_db('crs-proj')
+        row = conn.execute(
+            'SELECT status, message_count FROM series WHERE change_id = ?',
+            ('cid-crs',),
+        ).fetchone()
+        conn.close()
+        assert row['status'] == 'waiting'
+        assert row['message_count'] == 3
 
     def test_checked_out_branch_skips_search(self, gitdir: str) -> None:
         branch = create_review_branch(

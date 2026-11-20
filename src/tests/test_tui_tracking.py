@@ -52,6 +52,7 @@ from b4.review_tui._modals import (
     LimitScreen,
     LinkRevisionConfirmScreen,
     LinkRevisionScreen,
+    RevisionChoiceScreen,
     SnoozeScreen,
     TakeConfirmScreen,
     TargetBranchScreen,
@@ -817,6 +818,64 @@ class TestTrackingWithReviewBranch:
         ).fetchone()
         conn.close()
         assert tuple(row) == (10, 10)
+
+
+class TestTrackingWithoutReviewBranch:
+    """Entering review must import a branchless waiting series first."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('newer', [False, True])
+    @pytest.mark.parametrize('entry', ['r', 'menu'])
+    async def test_review_waiting_starts_checkout(
+        self, gitdir: str, newer: bool, entry: str
+    ) -> None:
+        identifier = 'test-review-waiting-no-branch'
+        change_id = 'waiting-no-branch'
+        seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'status': 'waiting',
+                    'message_id': 'v1@ex.com',
+                }
+            ],
+        )
+        if newer:
+            conn = tracking.get_db(identifier)
+            tracking.add_revision(conn, change_id, 2, 'v2@ex.com')
+            conn.close()
+
+        app = TrackingApp(identifier)
+        with patch.object(app, '_checkout_new_series') as checkout:
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                if entry == 'menu':
+                    await pilot.press('a')
+                    await pilot.pause()
+                await pilot.press('r')
+                await pilot.pause()
+
+                if newer:
+                    assert isinstance(app.screen, RevisionChoiceScreen)
+                    checkout.assert_not_called()
+                    await pilot.press('escape')
+                    await pilot.pause()
+                    assert _get_db_status(identifier, change_id) == 'waiting'
+                    await pilot.press('r')
+                    await pilot.pause()
+                    await pilot.press('n')
+                    await pilot.pause()
+
+                checkout.assert_called_once_with()
+                assert not app._exit
+                assert app._selected_series is not None
+                assert app._selected_series['revision'] == (2 if newer else 1)
+                # Starting (or cancelling/failing) checkout must not promote
+                # the series before a branch has actually been created.
+                assert _get_db_status(identifier, change_id) == 'waiting'
+                assert tracking.rescan_branches(identifier, gitdir)['gone'] == 0
+                assert _get_db_status(identifier, change_id) == 'waiting'
 
 
 class TestTrackingActionMenu:

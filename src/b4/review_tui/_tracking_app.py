@@ -1902,6 +1902,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
+        if status == 'waiting':
+            topdir = b4.git_get_toplevel()
+            change_id = self._selected_series.get('change_id', '')
+            if not topdir or not b4.git_branch_exists(topdir, f'b4/review/{change_id}'):
+                # Waiting can be set before the series has been imported.
+                # Use the normal checkout flow, keeping its stored status
+                # until checkout succeeds so cancellation leaves it waiting.
+                status = 'new'
         if status in (
             'reviewing',
             'replied',

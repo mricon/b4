@@ -2796,6 +2796,10 @@ def update_series_tracking(
         'partial',
         'waiting',
     )
+    # Waiting can be set before importing a series, so it need not have
+    # a review branch yet.  Keep updating its database and thread data.
+    if update_branch and topdir and status == 'waiting':
+        update_branch = b4.git_branch_exists(topdir, branch)
     if update_branch and topdir and b4.git_branch_checked_out(topdir, branch):
         logger.debug('%s is checked out, leaving the branch alone', branch)
         result['checked_out'] = True

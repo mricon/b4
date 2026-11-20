@@ -3414,6 +3414,20 @@ def refresh_message_count(
     return True
 
 
+def _had_branch(conn: sqlite3.Connection, change_id: str, revision: int) -> bool:
+    """Return whether a rescan has ever seen a review branch for this revision.
+
+    An upgraded series keeps the row of its older revision, so the branch
+    that revision once had must not count for another one.
+    """
+    row = conn.execute(
+        'SELECT 1 FROM series'
+        ' WHERE change_id = ? AND revision = ? AND branch_sha IS NOT NULL',
+        (change_id, revision),
+    ).fetchone()
+    return row is not None
+
+
 def rescan_branches(
     identifier: str, topdir: str, branch: Optional[str] = None
 ) -> Dict[str, int]:
@@ -3571,6 +3585,12 @@ def rescan_branches(
             if not sid:
                 continue
             if s.get('status') in active_statuses and sid not in scanned_change_ids:
+                if s.get('status') == 'waiting' and not _had_branch(
+                    conn, sid, s['revision']
+                ):
+                    # A new series can be marked waiting before it is ever
+                    # imported, so it is not missing a branch it once had.
+                    continue
                 branch_name = f'b4/review/{sid}'
                 if not b4.git_branch_exists(topdir, branch_name):
                     update_series_status(conn, sid, 'gone', revision=s.get('revision'))
