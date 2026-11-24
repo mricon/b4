@@ -128,22 +128,20 @@ def _format_series_label(
 class PwSeriesItem(ListItem):
     """A single Patchwork series entry in the listing."""
 
-    ACTION_REQUIRED_STATES = ('new', 'under-review')
-
     def __init__(
         self,
         series: Dict[str, Any],
         tracked: bool = False,
         show_delegate: bool = True,
         selected: bool = False,
+        dimmed: bool = False,
     ) -> None:
         super().__init__()
         self.series = series
         self.tracked = tracked
         self.show_delegate = show_delegate
         self.selected = selected
-        state = series.get('state', 'new')
-        if state not in self.ACTION_REQUIRED_STATES:
+        if dimmed:
             self.add_class('--dimmed')
         if tracked:
             self.add_class('--tracked')
@@ -317,6 +315,9 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         self._email_dryrun = email_dryrun
         self._patatt_sign = patatt_sign
         self._states: List[Dict[str, Any]] = []
+        # Series in any other state are dimmed.  Read once: the listing can
+        # run to hundreds of rows, and config does not change mid-session.
+        self._show_states = b4.review.pw_show_states()
         self._hidden_ids: Set[int] = set()
         self._tracked_ids: Set[int] = set()
         # Series ids marked for a bulk action (set state). Persists across
@@ -580,6 +581,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                 tracked=is_tracked,
                 show_delegate=show_delegate,
                 selected=is_selected,
+                dimmed=s.get('state', 'new') not in self._show_states,
             )
             if is_hidden:
                 item.add_class('--hidden')
@@ -874,7 +876,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             if item is None:
                 continue
             item.selected = False
-            if new_state in PwSeriesItem.ACTION_REQUIRED_STATES:
+            if new_state in self._show_states:
                 item.remove_class('--dimmed')
             else:
                 item.add_class('--dimmed')

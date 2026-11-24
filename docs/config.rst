@@ -1077,6 +1077,25 @@ integrate your b4 workflow with patchwork.
      .. versionchanged:: v0.17
         Also used by ``b4 review``.
 
+   :term:`b4.pw-show-states`
+     The Patchwork states of the patches the ``b4 review`` Patchwork
+     browser lists. Takes a comma- or space-separated list of state
+     slugs, and may be given more than once. Use this if your project
+     uses custom states for patches that still need attention. For
+     example::
+
+         pw-show-states = new, needs-ack
+
+     Series whose state changes to one outside this list stay in the
+     listing until the next refresh, but are dimmed.
+
+     A project can set this for all its maintainers in the ``.b4-config``
+     file at the top of the tree.
+
+     Default: ``new, under-review``
+
+     .. versionadded:: v0.17
+
    :term:`b4.pw-url`
      The URL of your patchwork server. Note, that this should point at the
      top-level of your patchwork installation and **not** at the project patch

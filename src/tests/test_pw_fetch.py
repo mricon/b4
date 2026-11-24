@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import pytest
 
 import b4
+import b4.review
 from b4.review._review import (
     PW_BACKLOG_GATE,
     PW_WINDOW_DAYS,
@@ -47,12 +48,12 @@ class _FakeResp:
         return self._payload
 
 
-def _patch(pid: int, sid: int, date: str) -> Dict[str, Any]:
+def _patch(pid: int, sid: int, date: str, state: str = 'new') -> Dict[str, Any]:
     """A minimal Patchwork patch dict carrying one series."""
     return {
         'id': pid,
         'date': date,
-        'state': 'new',
+        'state': state,
         'msgid': f'm{pid}@example.com',
         'name': f'patch {pid}',
         'submitter': {'name': 'Sub', 'email': 'sub@example.com'},
@@ -67,10 +68,17 @@ class _FakeSession:
     The per_page=1 probe answers with a ``last`` link whose page number equals
     *count* (mirroring real Patchwork); the actual fetch returns a single page
     of patches with no ``next`` link.  Every request's params are recorded.
+    *states* gives the states of the two fetched patches, oldest first.
     """
 
-    def __init__(self, count: int, window_count: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        count: int,
+        window_count: Optional[int] = None,
+        states: Tuple[str, str] = ('new', 'new'),
+    ) -> None:
         self._count = count
+        self._states = states
         # The count returned by the per_page=1 probe when a 'since' filter is
         # present (i.e. the windowed re-probe); defaults to the full count.
         self._window_count = window_count if window_count is not None else count
@@ -92,8 +100,8 @@ class _FakeSession:
         # Actual fetch: one page, two patches in one series, no next link.
         return _FakeResp(
             payload=[
-                _patch(1, 1, '2026-06-01T00:00:00'),
-                _patch(2, 1, '2026-06-02T00:00:00'),
+                _patch(1, 1, '2026-06-01T00:00:00', self._states[0]),
+                _patch(2, 1, '2026-06-02T00:00:00', self._states[1]),
             ],
             links={},
         )
@@ -105,9 +113,9 @@ class _FakeSession:
 
 
 def _fetch_with_backlog(
-    monkeypatch: pytest.MonkeyPatch, count: int
+    monkeypatch: pytest.MonkeyPatch, count: int, **kwargs: Any
 ) -> Tuple[_FakeSession, PwFetchResult]:
-    sess = _FakeSession(count)
+    sess = _FakeSession(count, **kwargs)
     monkeypatch.setattr(
         b4,
         'get_patchwork_session',
@@ -221,3 +229,58 @@ class TestProgressCallback:
         calls = self._run(monkeypatch, sess)
         assert calls[0] == (0, 17)
         assert all(total == 17 for _fetched, total in calls)
+
+
+# ---------------------------------------------------------------------------
+# b4.pw-show-states
+# ---------------------------------------------------------------------------
+
+
+class TestShowStates:
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            pytest.param(None, ['new', 'under-review'], id='default'),
+            pytest.param('', ['new', 'under-review'], id='empty-is-default'),
+            pytest.param('needs-review', ['needs-review'], id='single'),
+            pytest.param(
+                'new, Changes-Requested  needs-review',
+                ['new', 'changes-requested', 'needs-review'],
+                id='comma-and-space-separated',
+            ),
+            pytest.param(
+                ['new', 'needs-review,new'], ['new', 'needs-review'], id='multi-value'
+            ),
+        ],
+    )
+    def test_parse(self, value: Any, expected: List[str]) -> None:
+        if value is None:
+            b4.MAIN_CONFIG.pop('pw-show-states', None)
+        else:
+            b4.MAIN_CONFIG['pw-show-states'] = value
+        assert b4.review.pw_show_states() == expected
+
+    def test_fetch_requests_configured_states(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        b4.MAIN_CONFIG['pw-show-states'] = ['new', 'needs-review']
+        sess, _result = _fetch_with_backlog(monkeypatch, count=2)
+        assert sess.requests
+        for params in sess.requests[:1] + sess.fetch_params[:1]:
+            assert params['state'] == ['new', 'needs-review']
+
+    @pytest.mark.parametrize(
+        'states',
+        [
+            pytest.param(('new', 'needs-ack'), id='newest-moved-on'),
+            pytest.param(('needs-ack', 'new'), id='oldest-moved-on'),
+        ],
+    )
+    def test_series_takes_state_of_patch_that_moved_on(
+        self, monkeypatch: pytest.MonkeyPatch, states: Tuple[str, str]
+    ) -> None:
+        """A series whose patches have mixed states shows the one that is not
+        'new', whatever the patch order, for custom states too."""
+        b4.MAIN_CONFIG['pw-show-states'] = ['new', 'needs-ack']
+        _sess, result = _fetch_with_backlog(monkeypatch, count=2, states=states)
+        assert [s['state'] for s in result.series] == ['needs-ack']

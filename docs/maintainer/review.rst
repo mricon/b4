@@ -867,7 +867,8 @@ If your project uses a Patchwork server (see :ref:`patchwork_settings`),
 press ``p`` in the tracking list to open the Patchwork browser. From
 there you can:
 
-* Browse series from your Patchwork project
+* Browse series from your Patchwork project (by default those in the
+  ``new`` or ``under-review`` state; see :term:`b4.pw-show-states`)
 * View a series thread (``Enter``)
 * View CI check details for a series (``c``)
 * Track a series directly from the Patchwork list (``t``)

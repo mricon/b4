@@ -1056,6 +1056,51 @@ class TestPwBulkSetState:
             assert not isinstance(app.screen, SetStateScreen)
 
 
+class TestPwShowStates:
+    """Rows in a state outside b4.pw-show-states are dimmed, on load and
+    after a state change, so custom states like needs-ack read as open."""
+
+    @pytest.mark.asyncio
+    async def test_dimming_follows_configured_states(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        b4.MAIN_CONFIG['pw-show-states'] = ['needs-ack']
+        fake = _FakePwSession()
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (fake, 'https://pw/api')
+        )
+        _install_series(
+            monkeypatch,
+            [
+                _mk_series(1, 'needs-ack'),
+                _mk_series(2, 'new'),
+                _mk_series(3, 'needs-ack'),
+            ],
+        )
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            def dimmed() -> Dict[int, bool]:
+                return {
+                    it.series['id']: it.has_class('--dimmed')
+                    for it in app._visible_items()
+                }
+
+            # 'new' is a default show state, but not one this project lists.
+            assert dimmed() == {1: False, 2: True, 3: False}
+
+            app.query_one('#pw-list', ListView).index = 0
+            app.action_set_state()
+            await pilot.pause()
+            await app.screen.dismiss(('accepted', False))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert dimmed() == {1: True, 2: True, 3: False}
+
+
 class TestPwSetStateNullName:
     """A Patchwork series with a null ``name`` must not crash set-state.
 

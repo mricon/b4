@@ -4324,6 +4324,7 @@ PW_WINDOW_DAYS = 30
 # Patchwork's hard cap on results per page; also our fetch page size.  Patches
 # arrive a page at a time, so this is the granularity of fetch progress.
 PW_PER_PAGE = 250
+PW_DEFAULT_SHOW_STATES = ('new', 'under-review')
 
 
 class PwFetchResult(NamedTuple):
@@ -4389,7 +4390,7 @@ def pw_fetch_series(
     patches_url = '/'.join((api_url, 'patches'))
     params: Dict[str, Any] = {
         'project': pwproj,
-        'state': ['new', 'under-review'],
+        'state': pw_show_states(),
         'order': '-date',
         'per_page': str(PW_PER_PAGE),
         'archived': 'false',
@@ -4468,9 +4469,11 @@ def pw_fetch_series(
                 patch_date = patch.get('date', '')
                 if patch_date and (not existing_date or patch_date < existing_date):
                     series_map[sid]['date'] = patch_date
-                # Prefer under-review over new
-                if patch.get('state') == 'under-review':
-                    series_map[sid]['state'] = 'under-review'
+                # Once any patch has moved on from 'new', so has the series.
+                # Ranking the other states would need an order that custom
+                # Patchwork states do not have.
+                if series_map[sid]['state'] == 'new':
+                    series_map[sid]['state'] = patch.get('state', 'new')
                 # Aggregate CI check: worst status wins
                 patch_check = patch.get('check', 'pending')
                 cur_check = series_map[sid].get('check', 'pending')
@@ -4596,6 +4599,26 @@ def pw_fetch_checks(
         except Exception:
             continue
     return all_checks
+
+
+def pw_show_states() -> List[str]:
+    """Return the Patchwork states the Patchwork browser lists.
+
+    Read from ``b4.pw-show-states``, which takes a comma- or space-separated
+    list of state slugs and may be given more than once.  Falls back to
+    :data:`PW_DEFAULT_SHOW_STATES` when unset or empty.
+    """
+    val = b4.get_main_config().get('pw-show-states')
+    if isinstance(val, str):
+        val = [val]
+    states: List[str] = []
+    if isinstance(val, list):
+        for entry in val:
+            for state in re.split(r'[\s,]+', str(entry)):
+                state = state.strip().lower()
+                if state and state not in states:
+                    states.append(state)
+    return states or list(PW_DEFAULT_SHOW_STATES)
 
 
 def pw_set_series_state(
