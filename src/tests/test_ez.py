@@ -2012,6 +2012,45 @@ def test_send_needs_a_visible_destination(
     assert ('Could not find any destination addresses' in caplog.text) is (code == 1)
 
 
+@pytest.mark.parametrize(
+    'bcc,shown',
+    [
+        (['--bcc', 'secret@example.com'], True),
+        ([], False),
+    ],
+)
+def test_send_says_endpoint_gets_bcc_list(
+    prepdir: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    bcc: List[str],
+    shown: bool,
+) -> None:
+    """The endpoint may be one the tree picked in its .b4-config, and the
+    Bcc list is the only part of the request that is not public anyway.
+    The last prompt must say that the endpoint gets it, while the user
+    can still abort."""
+    _add_series_commit(prepdir)
+    b4.MAIN_CONFIG['send-endpoint-web'] = 'https://example.org/_submit'
+    b4.MAIN_CONFIG['prep-pre-flight-checks'] = 'disable-all'
+
+    def _abort(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr('builtins.input', _abort)
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        ['--no-stdin', '--no-interactive', 'send', '--use-web-endpoint']
+        + ['--to', 'list@example.com']
+        + bcc
+    )
+    with caplog.at_level(logging.INFO), pytest.raises(SystemExit) as exc:
+        b4.ez.cmd_send(cmdargs)
+    assert exc.value.code == 130
+    assert '- via web endpoint: https://example.org/_submit' in caplog.text
+    assert ('the Bcc list is shared with this endpoint' in caplog.text) is shown
+
+
 def test_prep_deps_from_stdin_blank_clears(
     prepdir: str, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

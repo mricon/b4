@@ -3562,6 +3562,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             else:
                 logger.info('  - send the above messages to actual recipients')
             logger.info('  - via web endpoint: %s', endpoint)
+            if allbcc and not cmdargs.reflect:
+                # A tree can name the endpoint in its .b4-config, and the
+                # Bcc list is the one thing we post that is not public
+                logger.info('  - the Bcc list is shared with this endpoint')
         else:
             if sconfig.get('from'):
                 fromaddr = sconfig.get('from')
