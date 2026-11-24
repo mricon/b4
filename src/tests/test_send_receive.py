@@ -224,6 +224,7 @@ def patch_message(
     body: str = MINIMAL_DIFF,
     charset: str = 'utf-8',
     subject: str = '[PATCH] Fix bar',
+    bcc: Optional[str] = None,
 ) -> str:
     msg = make_msg(
         b4.make_msgid().strip('<>'),
@@ -233,6 +234,8 @@ def patch_message(
         body=body,
         charset=charset,
     )
+    if bcc:
+        msg['Bcc'] = bcc
     return key.sign_message(msg)
 
 
@@ -413,6 +416,21 @@ def test_dryrun_does_not_connect_to_smtp(
     monkeypatch.setattr(endpoint.mod.SendReceiveListener, 'get_smtp', no_smtp)
     res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
     assert res['result'] == 'success', res
+
+
+@pytest.mark.parametrize('extra', ['', 'max-client-bcc = 2'])
+def test_receive_refuses_bcc_header(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key, extra: str
+) -> None:
+    """A Bcc: header would go to the list and into the archive as it is,
+    whatever the client meant by it."""
+    endpoint = Endpoint(tmp_path, monkeypatch, tmp_path / 'auth.sqlite3', extra=extra)
+    endpoint.add_verified_key(dev_key)
+    msg = patch_message(dev_key, bcc='secret@example.com')
+    res = endpoint.post(action='receive', messages=[msg])
+    assert res['result'] == 'error'
+    assert 'Bcc' in res['message']
+    assert endpoint.mailed == []
 
 
 LISTID = 'Test <test.example.org>'

@@ -707,6 +707,13 @@ class SendReceiveListener(object):
                         message='Destinations must include a mailing list we recognize.',
                     )
                     return
+            # The header would go to the list and into the archive as it is
+            if msg.get_all('bcc'):
+                self.send_error(
+                    resp,
+                    message='Messages may not have a Bcc: header, send the addresses in the bcc list',
+                )
+                return
             msg.add_header(
                 'X-Endpoint-Received',
                 f'by {servicename} for {identity}/{selector} with auth_id={auth_id}',
