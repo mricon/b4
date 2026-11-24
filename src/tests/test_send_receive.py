@@ -10,6 +10,7 @@ import datetime
 import email.charset
 import email.message
 import importlib.util
+import logging
 import pathlib
 import re
 import smtplib
@@ -416,6 +417,63 @@ def test_dryrun_does_not_connect_to_smtp(
     monkeypatch.setattr(endpoint.mod.SendReceiveListener, 'get_smtp', no_smtp)
     res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
     assert res['result'] == 'success', res
+
+
+def test_client_bcc_is_off_unless_enabled(endpoint: Endpoint, dev_key: Key) -> None:
+    """Bcc recipients are not in the public archive, which is what makes
+    relay abuse visible, so the operator has to turn them on."""
+    endpoint.add_verified_key(dev_key)
+    res = endpoint.post(
+        action='receive', messages=[patch_message(dev_key)], bcc=['bob@example.com']
+    )
+    assert res['result'] == 'error'
+    assert 'not accepted' in res['message']
+    assert endpoint.mailed == []
+
+
+def test_client_bcc_is_delivered_logged_and_confirmed(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dev_key: Key,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bcc addresses go only into the envelope. The log is the one place
+    that records who got a hidden copy. The reply counts them, because an
+    endpoint without Bcc support ignores the list and still reports
+    success."""
+    endpoint = Endpoint(
+        tmp_path, monkeypatch, tmp_path / 'auth.sqlite3', extra='max-client-bcc = 2'
+    )
+    endpoint.add_verified_key(dev_key)
+    with caplog.at_level(logging.INFO, logger='b4-send-receive'):
+        res = endpoint.post(
+            action='receive',
+            messages=[patch_message(dev_key)],
+            bcc=['Bob <BOB@example.com>'],
+        )
+    assert res['result'] == 'success', res
+    assert res['bcc'] == 1
+    recipients, sent = endpoint.mailed[-1]
+    assert sorted(recipients) == ['bob@example.com', 'list@example.org']
+    assert b'bob@example.com' not in sent.lower()
+    assert f'Bcc for {IDENTITY}/default: bob@example.com' in caplog.text
+
+
+def test_client_bcc_limit(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
+) -> None:
+    endpoint = Endpoint(
+        tmp_path, monkeypatch, tmp_path / 'auth.sqlite3', extra='max-client-bcc = 1'
+    )
+    endpoint.add_verified_key(dev_key)
+    res = endpoint.post(
+        action='receive',
+        messages=[patch_message(dev_key)],
+        bcc=['a@example.com', 'b@example.com'],
+    )
+    assert res['result'] == 'error'
+    assert 'Too many BCC recipients (max: 1)' in res['message']
+    assert endpoint.mailed == []
 
 
 @pytest.mark.parametrize('extra', ['', 'max-client-bcc = 2'])

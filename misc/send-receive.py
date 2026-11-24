@@ -25,6 +25,7 @@ from configparser import ConfigParser, ExtendedInterpolation
 from email import charset, utils
 from string import Template
 from typing import (
+    Dict,
     Generator,
     List,
     Mapping,
@@ -183,10 +184,15 @@ class SendReceiveListener(object):
         logger.critical('Returning error: %s', message)
         resp.text = json.dumps({'result': 'error', 'message': message})
 
-    def send_success(self, resp: falcon.Response, message: str) -> None:
+    def send_success(
+        self,
+        resp: falcon.Response,
+        message: str,
+        extra: Optional[Mapping[str, JSON]] = None,
+    ) -> None:
         resp.status = falcon.HTTP_200
         logger.debug('Returning success: %s', message)
-        resp.text = json.dumps({'result': 'success', 'message': message})
+        resp.text = json.dumps({'result': 'success', 'message': message, **(extra or {})})
 
     def get_frompair(self) -> Tuple[str, str]:
         afrom = self._config['sendemail'].get('from')
@@ -564,7 +570,14 @@ class SendReceiveListener(object):
             if not isinstance(jbcc, list):
                 self.send_error(resp, message='Invalid bcc payload format')
                 return
-            max_bcc = self._config['main'].getint('max-client-bcc', fallback=10)
+            # Off unless the operator turns it on: Bcc recipients are not in
+            # the public archive, which is what makes relay abuse visible
+            max_bcc = self._config['main'].getint('max-client-bcc', fallback=0)
+            if jbcc and max_bcc <= 0:
+                self.send_error(
+                    resp, message='BCC recipients are not accepted by this endpoint'
+                )
+                return
             for entry in jbcc:
                 if not isinstance(entry, str):
                     self.send_error(resp, message='Invalid bcc address format')
@@ -724,6 +737,18 @@ class SendReceiveListener(object):
         # that umsgs is truthy (not empty).
         assert identity is not None
 
+        # Reflected messages only go back to the sender
+        if reflect:
+            client_bcc = set()
+        # Nothing else records who got a hidden copy
+        if client_bcc:
+            logger.info(
+                'Bcc for %s/%s: %s', identity, selector, ', '.join(sorted(client_bcc))
+            )
+        # Tells the client its list was used: an endpoint that does not know
+        # about Bcc ignores it and reports success all the same
+        bccinfo: Dict[str, JSON] = {'bcc': len(client_bcc)} if client_bcc else {}
+
         # All signatures verified. Prepare every message before any network
         # I/O, so that a message we can't rewrite fails the whole request
         # with nothing sent.
@@ -845,7 +870,9 @@ class SendReceiveListener(object):
                 logger.info(bdata.decode(errors='replace'))
                 logger.info('---DRYRUN MSG END---')
             self.send_success(
-                resp, message=f'Dry run of {len(tosend)} messages for {identity}'
+                resp,
+                message=f'Dry run of {len(tosend)} messages for {identity}',
+                extra=bccinfo,
             )
             return
 
@@ -880,7 +907,9 @@ class SendReceiveListener(object):
             '%s %s messages for %s/%s', sentaction, len(msgs), identity, selector
         )
         self.send_success(
-            resp, message=f'{sentaction} {len(msgs)} messages for {identity}/{selector}'
+            resp,
+            message=f'{sentaction} {len(msgs)} messages for {identity}/{selector}',
+            extra=bccinfo,
         )
 
     def archive(self, pi: PublicInbox, subject: str, pdata: bytes) -> bool:
