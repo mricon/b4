@@ -1,11 +1,29 @@
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from contextlib import ExitStack
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from unittest.mock import patch
 
 import pytest
 
 import b4
 import b4.mbox
+
+
+@pytest.fixture
+def applied_log(gitdir: str, tmp_path: Path) -> Path:
+    """Install a post-applypatch hook that logs each applied patch's subject.
+
+    Returns the log file, which does not exist until the hook runs once.
+    """
+    hooksdir = tmp_path / 'hooks'
+    hooksdir.mkdir()
+    log = tmp_path / 'applied.log'
+    hook = hooksdir / 'post-applypatch'
+    hook.write_text(f'#!/bin/sh\ngit log -1 --format=%s >> "{log}"\n')
+    hook.chmod(0o755)
+    b4.git_set_config(gitdir, 'core.hooksPath', str(hooksdir))
+    return log
 
 
 class TestAmConflictError:
@@ -944,3 +962,171 @@ class TestSubdirCleanThreeWay:
 
         # Worktree torn down, nothing parked for resolution.
         assert not os.path.exists(os.path.join(common_dir, 'b4-shazam-worktree'))
+
+
+def _build_mixed_conflict(gitdir: str) -> bytes:
+    """2-patch mbox whose second patch conflicts in one file and not another.
+
+    Patch 1 changes a root file cleanly. Patch 2 changes ``drivers/foo.txt``,
+    which conflicts with master, and ``drivers/bar.txt``, which needs a 3-way
+    merge that is clean.
+    """
+    bar = ''.join('%d\n' % n for n in range(1, 21))
+
+    def commit(msg: str, files: Dict[str, str], mode: str = 'w') -> None:
+        for name, content in files.items():
+            path = os.path.join(gitdir, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, mode) as fh:
+                fh.write(content)
+        b4.git_run_command(gitdir, ['add', *files])
+        b4.git_run_command(gitdir, ['commit', '-m', msg])
+
+    commit('Seed drivers', {'drivers/foo.txt': '1\n2\n3\n', 'drivers/bar.txt': bar})
+
+    b4.git_run_command(gitdir, ['checkout', '-b', 'mixed-patch'])
+    commit('Patch 1: modify file2', {'file2.txt': 'Added by patch 1.\n'}, mode='a')
+    commit(
+        'Patch 2: change drivers',
+        {
+            'drivers/foo.txt': '1\nPATCH\n3\n',
+            'drivers/bar.txt': bar.replace('10\n', 'TEN-from-patch\n'),
+        },
+    )
+    ecode, mbox = b4.git_run_command(gitdir, ['format-patch', '-2', '--stdout'])
+    assert ecode == 0
+
+    b4.git_run_command(gitdir, ['checkout', 'master'])
+    b4.git_run_command(gitdir, ['branch', '-D', 'mixed-patch'])
+    # Line 13 of bar.txt is inside the patch's context for line 10 (forces a
+    # 3-way) but clear of it, so only foo.txt is a real conflict.
+    commit(
+        'Master: change drivers',
+        {
+            'drivers/foo.txt': '1\nMASTER\n3\n',
+            'drivers/bar.txt': bar.replace('13\n', 'THIRTEEN-master\n'),
+        },
+    )
+    return mbox.encode()
+
+
+class TestAmHooksRunOncePerPatch:
+    """A conflict must not make git am hooks run again for applied patches.
+
+    Hooks have side effects outside the scratch worktree: a post-applypatch
+    hook may add a git note or notify another system. When the am stops, the
+    patches before the conflict are already applied and their hooks have
+    run, so getting the conflict ready for the user must not apply them a
+    second time.
+    """
+
+    @pytest.mark.parametrize(
+        'builder,sparse_paths,applied',
+        [
+            # The usual case: the conflicting file is in the sparse checkout.
+            pytest.param(
+                lambda gitdir: _build_multi_patch_conflict(gitdir)[0],
+                None,
+                ['Patch 1: modify file2', 'Patch 2: modify lipsum'],
+                id='conflict-in-sparse-set',
+            ),
+            # The conflicting file could not be mapped to a sparse path, so
+            # the am stops without recording the conflict.
+            pytest.param(
+                _build_subdir_conflict,
+                set(),
+                ['Patch 1: modify file2'],
+                id='conflict-outside-sparse-set',
+            ),
+        ],
+    )
+    def test_hooks_run_once_before_conflict(
+        self,
+        gitdir: str,
+        applied_log: Path,
+        builder: Callable[[str], bytes],
+        sparse_paths: Optional[Set[str]],
+        applied: List[str],
+    ) -> None:
+        ambytes = builder(gitdir)
+
+        with ExitStack() as stack:
+            if sparse_paths is not None:
+                stack.enter_context(
+                    patch('b4._touched_paths_from_am', return_value=sparse_paths)
+                )
+            with pytest.raises(b4.AmConflictError) as exc_info:
+                b4.git_fetch_am_into_repo(
+                    gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
+                )
+
+        assert applied_log.read_text().splitlines() == applied
+        # However the am got here, the user must find a conflict to resolve.
+        wt = exc_info.value.worktree_path
+        _ecode, unmerged = b4.git_run_command(
+            wt, ['diff', '--name-only', '--diff-filter=U'], rundir=wt
+        )
+        assert unmerged.strip()
+
+    def test_git_without_retry_still_parks_conflict(self, gitdir: str) -> None:
+        """Before git 2.46 there is no ``git am --retry`` to finish in place.
+
+        Such a git starts the series over on the full tree. That runs the
+        hooks again, but the user must still get a conflict they can resolve.
+        """
+        ambytes = _build_subdir_conflict(gitdir)
+
+        with (
+            patch('b4._touched_paths_from_am', return_value=set()),
+            patch('b4.git_check_minimal_version', return_value=False),
+        ):
+            with pytest.raises(b4.AmConflictError) as exc_info:
+                b4.git_fetch_am_into_repo(
+                    gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
+                )
+
+        wt = exc_info.value.worktree_path
+        _ecode, unmerged = b4.git_run_command(
+            wt, ['diff', '--name-only', '--diff-filter=U'], rundir=wt
+        )
+        assert 'drivers/foo.txt' in unmerged
+
+    def test_conflict_with_file_outside_sparse_set(
+        self, gitdir: str, applied_log: Path
+    ) -> None:
+        """A patch that conflicts in one file keeps its other files' changes.
+
+        One patch has a real conflict in a checked-out file and also touches
+        a file the sparse checkout does not have. Whatever state the first
+        attempt leaves, the user must be able to resolve the conflict and
+        get the whole patch, with the hooks of earlier patches run once.
+        """
+        ambytes = _build_mixed_conflict(gitdir)
+
+        with patch(
+            'b4._touched_paths_from_am',
+            return_value={'file2.txt', 'drivers/foo.txt'},
+        ):
+            with pytest.raises(b4.AmConflictError) as exc_info:
+                b4.git_fetch_am_into_repo(
+                    gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
+                )
+        assert applied_log.read_text().splitlines() == ['Patch 1: modify file2']
+
+        def finish(worktree: str) -> None:
+            with open(os.path.join(worktree, 'drivers', 'foo.txt'), 'w') as fh:
+                fh.write('1\nRESOLVED\n3\n')
+            b4.git_run_command(worktree, ['add', 'drivers/foo.txt'], rundir=worktree)
+            ecode, _out = b4.git_run_command(
+                worktree, ['am', '--continue'], rundir=worktree
+            )
+            assert ecode == 0
+
+        with patch('b4._suspend_to_shell', side_effect=_resolve_in_shell(finish)):
+            assert b4.resolve_am_conflict_in_shell(gitdir, exc_info.value)
+
+        ecode, foo = b4.git_run_command(gitdir, ['show', 'FETCH_HEAD:drivers/foo.txt'])
+        assert ecode == 0 and 'RESOLVED' in foo
+        ecode, bar = b4.git_run_command(gitdir, ['show', 'FETCH_HEAD:drivers/bar.txt'])
+        assert ecode == 0
+        assert 'TEN-from-patch' in bar and 'THIRTEEN-master' in bar

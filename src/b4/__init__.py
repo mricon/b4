@@ -7748,24 +7748,42 @@ def _sparse_patterns_for_paths(paths: Set[str]) -> bytes:
     return ('\n'.join(lines) + '\n').encode()
 
 
-def _replay_am_on_full_worktree(
-    gwt: str, ambytes: bytes, amargs: List[str]
+def _retry_am_on_full_worktree(
+    gwt: str, ambytes: bytes, amargs: List[str], stopped: Tuple[int, str]
 ) -> Tuple[int, str]:
-    """Replay a sparse-blocked ``git am`` on a full (non-sparse) checkout.
+    """Give a stopped sparse ``git am`` a full (non-sparse) checkout to finish on.
 
-    git_fetch_am_into_repo applies into a sparse worktree (only root-level files
-    materialized). git's 3-way merge will not write ``skip-worktree`` paths, so a
-    subdirectory file makes the sparse ``git am`` stop even when the 3-way is
-    clean -- and a real conflict there is recorded with an empty index (no markers
-    to resolve). Abort the partial am, drop the sparse restriction so every path
-    is present, and replay. Returns the replay's (exit code, output): non-zero is
-    a genuine conflict the user resolves; zero means only sparseness had blocked
-    it and the series actually applies cleanly.
+    git_fetch_am_into_repo applies into a sparse worktree that has only the
+    paths the patches touch, as far as we could work them out. git's 3-way
+    merge will not write ``skip-worktree`` paths, so a path we missed makes
+    the ``git am`` stop even when the 3-way is clean -- and a real conflict
+    there is recorded with an empty index (no markers to resolve). Drop the
+    sparse restriction so every path is present, and apply the stopped patch
+    again. *stopped* is the (exit code, output) of the sparse attempt.
+
+    Returns the (exit code, output) to go on with: non-zero is a genuine
+    conflict the user resolves; zero means only sparseness had blocked the am
+    and the series actually applies cleanly.
+
+    The patches before the stopped one stay applied. Their git am hooks have
+    already run, and hooks have side effects outside the worktree (git notes,
+    notifications), so applying those patches again would repeat them.
     """
     logger.info('Magic: Materializing the full tree to retry the merge')
-    git_run_command(gwt, ['am', '--abort'], logstderr=True, rundir=gwt)
+    if not git_check_minimal_version('2.46'):
+        # No "git am --retry" here, so all we can do is start over, hooks
+        # and all.
+        git_run_command(gwt, ['am', '--abort'], logstderr=True, rundir=gwt)
+        git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
+        return git_run_command(gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt)
+
     git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
-    return git_run_command(gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt)
+    ecode, unmerged = git_run_command(gwt, ['ls-files', '--unmerged'], rundir=gwt)
+    if ecode == 0 and unmerged.strip():
+        # The conflict is already recorded, so there is nothing to apply
+        # again: git am refuses to retry on an index with unmerged paths.
+        return stopped
+    return git_run_command(gwt, [*amargs, '--retry'], logstderr=True, rundir=gwt)
 
 
 def git_fetch_am_into_repo(
@@ -7853,10 +7871,12 @@ def git_fetch_am_into_repo(
         if ecode > 0:
             if resolve:
                 # The sparse worktree can't write skip-worktree paths, so git-am
-                # stops on any subdirectory file -- a real conflict (recorded
-                # with an empty index, no markers) or even a clean 3-way. Replay
-                # on a full worktree to tell them apart.
-                ecode, out = _replay_am_on_full_worktree(gwt, ambytes, amargs)
+                # stops on a path we did not check out -- a real conflict
+                # (recorded with an empty index, no markers) or even a clean
+                # 3-way. Retry on a full worktree to tell them apart.
+                ecode, out = _retry_am_on_full_worktree(
+                    gwt, ambytes, amargs, (ecode, out)
+                )
             if ecode > 0:
                 # Genuine conflict: park the am for the user to resolve.
                 cleanup = False
