@@ -1707,17 +1707,30 @@ def test_prep_get_base_tree(
     assert 'not an https:// or git:// URL' in caplog.text
 
 
-def test_prep_base_tree_not_from_b4_config(gitdir: str) -> None:
-    """A repository's own .b4-config can't choose the tree: it would put a
-    URL of the repository's choosing into the developer's email."""
-    evil = 'https://example.org/evil.git'
+@pytest.mark.parametrize(
+    'key,evil',
+    [
+        # It would put a URL of the repository's choosing into the
+        # developer's email
+        ('prep-base-tree', 'https://example.org/evil.git'),
+        # It would send a hidden copy of the developer's mail to an
+        # address of the repository's choosing
+        ('send-series-bcc', 'spy@example.org'),
+    ],
+)
+def test_sensitive_settings_not_from_b4_config(
+    gitdir: str, key: str, evil: str
+) -> None:
+    """A repository's own .b4-config travels with untrusted content, such
+    as a series under review, so it can't set what the developer would
+    not see or did not choose."""
     pathlib.Path(gitdir, '.b4-config').write_text(
-        f'[b4]\n\tprep-base-tree = {evil}\n\tprep-pre-flight-checks = disable-all\n'
+        f'[b4]\n\t{key} = {evil}\n\tprep-pre-flight-checks = disable-all\n'
     )
     b4._setup_main_config(topdir=gitdir)
     # Sanity: the file was read, an allowed setting made it in
     assert b4.MAIN_CONFIG.get('prep-pre-flight-checks') == 'disable-all'
-    assert b4.MAIN_CONFIG.get('prep-base-tree') != evil
+    assert b4.MAIN_CONFIG.get(key) != evil
 
 
 @pytest.mark.parametrize('strategy', ['commit', 'branch-description'])

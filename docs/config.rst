@@ -46,8 +46,8 @@ unrestricted:
   on the series you are preparing yourself
 - ``prep-pre-flight-checks`` -- which pre-flight checks are enabled
 - ``send-*`` -- recipient and addressing options, such as
-  ``send-series-to``, ``send-series-cc``, ``send-series-bcc``,
-  ``send-auto-to-cmd`` and ``send-auto-cc-cmd``
+  ``send-series-to``, ``send-series-cc``, ``send-auto-to-cmd`` and
+  ``send-auto-cc-cmd``
 - ``*mask`` -- URL templates such as ``midmask`` and ``linkmask``
 - ``*template*`` -- message templates
 - ``trailer*`` -- trailer-handling options
@@ -1275,6 +1275,9 @@ Contributor-oriented settings
      any exclusion filters (such as the ``--not-me-too`` flag or the
      :term:`b4.email-exclude` configuration setting).
      See :ref:`prep_recipients`.
+
+     This setting is ignored in the in-tree ``.b4-config`` file, because
+     no message header shows these recipients.
 
      Default: ``None``
 

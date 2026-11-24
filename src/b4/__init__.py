@@ -5036,10 +5036,13 @@ def _setup_main_config(
         'trailer*',
         'pw-*',
     ]
-    # Never take these from an in-tree .b4-config: they are personal and
-    # they make b4 ask git credential helpers for a secret.
+    # Never take these from an in-tree .b4-config. pw-user is personal and
+    # makes b4 ask git credential helpers for a secret. send-series-bcc
+    # adds recipients that no header shows, so a tree could get a copy of
+    # the developer's mail without anyone noticing.
     wtdeny = [
         'pw-user',
+        'send-series-bcc',
     ]
     multivals = [
         'keyringsrc',
