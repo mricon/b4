@@ -6723,6 +6723,15 @@ def send_mail(
         try:
             rdata = res.json()
             if rdata.get('result') == 'success':
+                # An endpoint that predates the bcc list ignores it and
+                # reports success all the same
+                if 'bcc' in req and 'bcc' not in rdata:
+                    logger.critical(
+                        'CRITICAL: The endpoint did not confirm the Bcc recipients.'
+                    )
+                    logger.critical(
+                        '          The series was sent, but most likely not to them.'
+                    )
                 return len(tosend)
         except Exception:
             logger.critical('Odd response from the endpoint: %s', res.text)

@@ -2578,12 +2578,29 @@ class TestSendMailBcc:
         assert set(seen_dests[0]) == {'bob@example.org', 'carol@example.org', 'dave@example.org', 'eve@example.org'}
         assert b'Bcc:' not in seen_bodies[0]
 
-    def test_send_mail_bcc_web_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize(
+        'reply,warned',
+        [
+            ({'result': 'success', 'bcc': 1}, False),
+            # An endpoint that predates the bcc list ignores it
+            ({'result': 'success'}, True),
+        ],
+    )
+    def test_send_mail_bcc_web_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        reply: Dict[str, Any],
+        warned: bool,
+    ) -> None:
+        """The endpoint gets the Bcc list next to the messages, and says
+        how many it used. Without that, the user must hear that the hidden
+        copies were most likely not sent, as the series itself went out."""
         posted_payload: Dict[str, Any] = {}
 
         class _FakeResponse:
             def json(self) -> Dict[str, Any]:
-                return {'result': 'success'}
+                return reply
 
         class _FakeSession:
             def post(self, url: str, json: Dict[str, Any]) -> _FakeResponse:
@@ -2598,16 +2615,18 @@ class TestSendMailBcc:
         msg['Subject'] = 'Test patch'
         msg.set_content('Diff content')
 
-        sent = b4.send_mail(
-            None,
-            [msg],
-            fromaddr='alice@example.org',
-            bccaddrs=['dave@example.org'],
-            web_endpoint='https://example.org/_submit',
-        )
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            sent = b4.send_mail(
+                None,
+                [msg],
+                fromaddr='alice@example.org',
+                bccaddrs=['dave@example.org'],
+                web_endpoint='https://example.org/_submit',
+            )
         assert sent == 1
         assert posted_payload.get('action') == 'receive'
         assert posted_payload.get('bcc') == ['dave@example.org']
+        assert ('did not confirm the Bcc recipients' in caplog.text) is warned
 
     def test_send_mail_ignores_series_bcc_config(
         self, monkeypatch: pytest.MonkeyPatch
