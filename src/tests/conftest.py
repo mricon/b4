@@ -35,6 +35,11 @@ def settestdefaults(
             'email': 'test-override@example.com',
         },
     )
+    # Tests must behave the same for everyone, and must never act with the
+    # developer's own setup: a signing key in ~/.gitconfig makes b4 sign for
+    # real, which can go as far as asking a hardware token for a touch.
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_SYSTEM', os.devnull)
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
     git_config_count = int(os.environ.get('GIT_CONFIG_COUNT', '0'))

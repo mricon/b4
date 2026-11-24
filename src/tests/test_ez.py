@@ -2106,6 +2106,8 @@ def test_send_rejects_per_patch_bcc_trailer(
             '--offline-mode',
             'send',
             '--dry-run',
+            # This send goes all the way, and there is no key to sign with.
+            '--no-sign',
             '--to',
             'list@example.com',
         ]
