@@ -688,18 +688,6 @@ class SendScreen(ModalScreen[bool]):
         self._msgs = msgs
 
     def compose(self) -> ComposeResult:
-        config = b4.get_main_config()
-        cfg_bcc = config.get('send-series-bcc')
-        series_bcc = (
-            {
-                x[1]
-                for x in b4.cleanup_email_addrs(
-                    email.utils.getaddresses([cfg_bcc]), set(), None
-                )
-            }
-            if isinstance(cfg_bcc, str) and cfg_bcc
-            else set()
-        )
         text = Text()
         text.append(f'Send {len(self._msgs)} review email(s)?', style='bold')
         text.append('\n')
@@ -718,7 +706,7 @@ class SendScreen(ModalScreen[bool]):
                     None,
                 )
             }
-            bcc_count = len(series_bcc | msg_bcc)
+            bcc_count = len(msg_bcc)
             recip_parts: List[str] = []
             if to_count:
                 recip_parts.append(f'{to_count} To')

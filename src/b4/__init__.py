@@ -6613,19 +6613,9 @@ def send_mail(
     if output_dir is not None:
         dryrun = True
 
-    bcc_set: Set[str] = set()
-    if bccaddrs is not None:
-        bcc_set = set(bccaddrs)
-    else:
-        config = get_main_config()
-        cfg_bcc = config.get('send-series-bcc')
-        if isinstance(cfg_bcc, str) and cfg_bcc:
-            bcc_set = {
-                x[1]
-                for x in cleanup_email_addrs(
-                    email.utils.getaddresses([cfg_bcc]), set(), None
-                )
-            }
+    # Only what the caller passes: send-series-bcc is b4 send's setting,
+    # and a hidden copy must never be added behind the caller's back.
+    bcc_set: Set[str] = set(bccaddrs) if bccaddrs else set()
 
     if patatt_sign:
         # Signing is the one step here that can block indefinitely: with a PGP

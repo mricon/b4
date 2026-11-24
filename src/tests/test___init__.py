@@ -2609,42 +2609,34 @@ class TestSendMailBcc:
         assert posted_payload.get('action') == 'receive'
         assert posted_payload.get('bcc') == ['dave@example.org']
 
-    def test_send_mail_bcc_from_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_send_mail_ignores_series_bcc_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """send-series-bcc is for b4 send, which passes it in. Every other
+        sender -- b4 ty, review and bugs replies -- must not pick it up on
+        its own and send hidden copies that the user never asked for."""
         seen_dests: List[List[str]] = []
-        seen_bodies: List[bytes] = []
 
         class _RecordingSMTP:
             def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
                 seen_dests.append(list(destaddrs))
-                seen_bodies.append(bdata)
 
         def _connect() -> Any:
             return _RecordingSMTP()
 
-        monkeypatch.setitem(b4.MAIN_CONFIG, 'send-series-bcc', 'dave@example.org, eve@example.org')
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'send-series-bcc', 'dave@example.org')
 
         msg = email.message.EmailMessage()
         msg['From'] = 'alice@example.org'
         msg['To'] = 'bob@example.org'
-        msg['Cc'] = 'carol@example.org'
-        msg['Subject'] = 'Test patch'
-        msg.set_content('Diff content')
+        msg['Subject'] = 'Re: [PATCH] Test patch'
+        msg.set_content('Review reply')
 
         sent = b4.send_mail(
-            b4.SMTPConnector(_connect),
-            [msg],
-            fromaddr='alice@example.org',
-            bccaddrs=None,
+            b4.SMTPConnector(_connect), [msg], fromaddr='alice@example.org'
         )
         assert sent == 1
-        assert len(seen_dests) == 1
-        assert set(seen_dests[0]) == {
-            'bob@example.org',
-            'carol@example.org',
-            'dave@example.org',
-            'eve@example.org',
-        }
-        assert b'Bcc:' not in seen_bodies[0]
+        assert seen_dests == [['bob@example.org']]
 
     def test_send_mail_per_message_bcc_header(self) -> None:
         seen_dests: List[List[str]] = []

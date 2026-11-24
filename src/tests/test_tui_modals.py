@@ -38,6 +38,7 @@ from b4.review_tui._modals import (
     NoteScreen,
     PriorReviewScreen,
     RevisionChoiceScreen,
+    SendScreen,
     SetStateScreen,
     SnoozeScreen,
     TakeScreen,
@@ -60,6 +61,38 @@ class ModalTestApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Label('host')
+
+
+# ---------------------------------------------------------------------------
+# SendScreen
+# ---------------------------------------------------------------------------
+
+
+class TestSendScreen:
+    @pytest.mark.asyncio
+    async def test_bcc_count_is_per_message(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The confirmation counts the Bcc recipients that send_mail() will
+        actually add: the message's own Bcc header, and nothing from
+        send-series-bcc, which only b4 send uses."""
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'send-series-bcc', 'dave@example.org')
+        with_bcc = email.message.EmailMessage()
+        with_bcc['Subject'] = 'Re: [PATCH 1/2] one'
+        with_bcc['To'] = 'bob@example.org'
+        with_bcc['Bcc'] = 'secret@example.org'
+        without_bcc = email.message.EmailMessage()
+        without_bcc['Subject'] = 'Re: [PATCH 2/2] two'
+        without_bcc['To'] = 'bob@example.org'
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(SendScreen([with_bcc, without_bcc]))
+            await pilot.pause()
+
+            text = static_text(app.screen.query(Static).first())
+            assert text.count('1 To, 1 Bcc') == 1
+            assert text.count('1 To\n') == 1
 
 
 # ---------------------------------------------------------------------------
