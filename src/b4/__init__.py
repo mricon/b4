@@ -7860,9 +7860,15 @@ def git_fetch_am_into_repo(
             logger.critical('Error running checkout into sparse workdir')
             logger.critical(out)
             raise RuntimeError
-        # No SCRATCH_GIT_OPTS on the apply: its commits are the real series,
-        # not scratch throwaways, so the user's signing config stays in force.
-        amargs = ['am']
+        if check_only:
+            # A check keeps none of its commits, so nothing may outlive it:
+            # hooks act outside the worktree (git notes, notifications).
+            amargs = [*SCRATCH_GIT_OPTS, '-c', f'core.hooksPath={os.devnull}', 'am']
+        else:
+            # No SCRATCH_GIT_OPTS on the apply: its commits are the real
+            # series, not scratch throwaways, so the user's signing config
+            # stays in force.
+            amargs = ['am']
         if am_flags:
             amargs.extend(am_flags)
         ecode, out = git_run_command(

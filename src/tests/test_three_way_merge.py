@@ -238,6 +238,20 @@ class TestGitFetchAmIntoRepo:
         gwt = os.path.join(common_dir, 'b4-shazam-worktree')
         assert not os.path.exists(gwt)
 
+    def test_check_only_runs_no_hooks(self, gitdir: str, applied_log: Path) -> None:
+        """A check throws its commits away, so it must not run git am hooks.
+
+        Hooks have side effects that outlive the scratch worktree (git notes,
+        notifications), and here they would be about commits nobody keeps.
+        """
+        ambytes, base = _build_clean_patches(gitdir)
+
+        b4.git_fetch_am_into_repo(
+            gitdir, ambytes, at_base=base, check_only=True, am_flags=['-3']
+        )
+
+        assert not applied_log.exists()
+
 
 def _build_subdir_three_way(gitdir: str) -> Tuple[bytes, str]:
     """Build a patch that only applies via a 3-way merge, on a subdirectory file.
