@@ -1977,6 +1977,41 @@ def test_send_preflight_base_not_in_tree(
         assert ('Base not in tree : base-commit' in caplog.text) is shown
 
 
+@pytest.mark.parametrize(
+    'dests,code',
+    [
+        # Cc alone is enough: each message moves its Cc into To
+        (['--cc', 'list@example.com'], 130),
+        (['--to', 'list@example.com'], 130),
+        # Bcc alone is not: nobody would see who the series went to
+        (['--bcc', 'secret@example.com'], 1),
+        ([], 1),
+    ],
+)
+def test_send_needs_a_visible_destination(
+    prepdir: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    dests: List[str],
+    code: int,
+) -> None:
+    """send stops early only when no To or Cc recipient is left. Getting
+    as far as the pre-flight prompt (130 once we abort it) means the
+    destination check passed."""
+    _add_series_commit(prepdir)
+
+    def _abort(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr('builtins.input', _abort)
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(['--no-stdin', '--no-interactive', 'send'] + dests)
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit) as exc:
+        b4.ez.cmd_send(cmdargs)
+    assert exc.value.code == code
+    assert ('Could not find any destination addresses' in caplog.text) is (code == 1)
+
+
 def test_prep_deps_from_stdin_blank_clears(
     prepdir: str, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

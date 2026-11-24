@@ -3399,22 +3399,16 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     allto = list()
     allcc = list()
     allbcc = list()
-    alldests = set()
 
     if todests:
         allto = b4.cleanup_email_addrs(todests, excludes, None)
         logger.debug('allto: %s', allto)
-        alldests.update(set([x[1] for x in allto]))
     if ccdests:
         allcc = b4.cleanup_email_addrs(ccdests, excludes, None)
         logger.debug('allcc: %s', allcc)
-        alldests.update(set([x[1] for x in allcc]))
     if bccdests:
         allbcc = b4.cleanup_email_addrs(bccdests, set(), None)
         logger.debug('allbcc: %s', allbcc)
-        alldests.update(set([x[1] for x in allbcc]))
-
-    logger.debug('alldests: %s', alldests)
 
     if not len(allto):
         # Move all cc's into the To field if there's nothing in "To"
@@ -3452,6 +3446,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
+        # Cc has been moved into To by now, and Bcc alone doesn't count:
+        # a series must show who it was sent to
         if not len(allto):
             logger.critical('CRITICAL: Could not find any destination addresses')
             logger.critical('          try b4 prep --auto-to-cc or b4 send --to addr')
