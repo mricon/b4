@@ -6694,6 +6694,10 @@ def send_mail(
                     fh.write(bdata)
                 continue
             logger.info('    --- DRYRUN: message follows ---')
+            envbcc = bcc_set | msg_bcc
+            if envbcc:
+                # Not in any header, so this is the only place to see them
+                logger.info('    Bcc (envelope only): %s', ', '.join(sorted(envbcc)))
             logger.info('    | %s', bdata.decode().rstrip().replace('\n', '\n    | '))
             logger.info('    --- DRYRUN: message ends ---')
             continue

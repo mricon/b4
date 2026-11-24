@@ -2628,6 +2628,23 @@ class TestSendMailBcc:
         assert posted_payload.get('bcc') == ['dave@example.org']
         assert ('did not confirm the Bcc recipients' in caplog.text) is warned
 
+    def test_send_mail_dryrun_shows_bcc(self, caplog: pytest.LogCaptureFixture) -> None:
+        """No header carries the Bcc recipients, so a dry run has to name
+        them, or the user can't check them before sending for real."""
+        msg = _plain_msg('[PATCH] Test patch')
+        msg['Bcc'] = 'secret@example.org'
+        with caplog.at_level(logging.INFO, logger='b4'):
+            sent = b4.send_mail(
+                None,
+                [msg],
+                fromaddr='alice@example.org',
+                bccaddrs=['dave@example.org'],
+                dryrun=True,
+            )
+        assert sent == 0
+        assert 'Bcc (envelope only): dave@example.org, secret@example.org' in caplog.text
+        assert 'Bcc:' not in caplog.text
+
     def test_send_mail_ignores_series_bcc_config(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
