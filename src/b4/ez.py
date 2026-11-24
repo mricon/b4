@@ -2636,12 +2636,8 @@ def get_cover_dests(
     ccs = list()
     seen = set()
     for trailer in all_trailers:
-        if trailer.lname == 'bcc' and trailer.addr is not None:
-            logger.critical('CRITICAL: Bcc trailers in patches are not supported.')
-            logger.critical(
-                '          Please remove them and use --bcc or send-series-bcc configuration.'
-            )
-            sys.exit(1)
+        # A Bcc trailer stays in the body, where b4 send finds and refuses
+        # it; everything else that formats the series keeps working
         if trailer.lname not in ('to', 'cc') or trailer.addr is None:
             continue
         _realname, addr = trailer.addr
@@ -3326,8 +3322,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         for btr in btrs:
             if btr.type != 'person':
                 continue
+            # Checked before the filters below, because any trailer we let
+            # through would become a public Cc
             if btr.lname == 'bcc':
-                logger.critical('CRITICAL: Bcc trailers in patches are not supported.')
+                logger.critical('CRITICAL: Bcc trailers are not supported.')
                 logger.critical(
                     '          Please remove them and use --bcc or send-series-bcc configuration.'
                 )

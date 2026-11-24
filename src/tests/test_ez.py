@@ -1447,10 +1447,10 @@ def _write(tmp_path: pathlib.Path, name: str, content: str) -> str:
     return str(fpath)
 
 
-def _add_series_commit(gitdir: str) -> None:
+def _add_series_commit(gitdir: str, fname: str = 'series-file.txt') -> None:
     """Give the prep branch one patch, so the series can be formatted."""
-    pathlib.Path(gitdir, 'series-file.txt').write_text('A series change.\n')
-    ecode, out = b4.git_run_command(None, ['add', 'series-file.txt'])
+    pathlib.Path(gitdir, fname).write_text('A series change.\n')
+    ecode, out = b4.git_run_command(None, ['add', fname])
     assert ecode == 0, out
     ecode, out = b4.git_run_command(None, ['commit', '-m', 'Add a series file'])
     assert ecode == 0, out
@@ -2106,18 +2106,38 @@ def test_send_rejects_per_patch_bcc_trailer(
             with pytest.raises(SystemExit) as ex:
                 b4.ez.cmd_send(cmdargs)
         assert ex.value.code == 1
-        assert 'Bcc trailers in patches are not supported' in caplog.text
+        assert 'Bcc trailers are not supported' in caplog.text
 
 
-def test_cover_rejects_bcc_trailer(caplog: pytest.LogCaptureFixture) -> None:
-    cbody = (
-        'Subject: [PATCH 0/1] Cover letter\n\n'
-        'Cover letter body\n\n'
-        'Bcc: Secret Person <secret@example.com>\n'
-        'Signed-off-by: Test Author <author@example.com>\n'
+@pytest.mark.parametrize('npatches', [1, 2])
+def test_cover_bcc_trailer_rejected_by_send(
+    prepdir: str,
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    npatches: int,
+) -> None:
+    """A Bcc: trailer in the cover letter would end up in the public Cc:,
+    so b4 send refuses it. Everything else that formats the series, such
+    as prep --check or --show-info, must keep working, so the user can
+    find and fix it. With one patch the cover is mixed into the patch."""
+    for i in range(npatches):
+        _add_series_commit(prepdir, f'series-file-{i}.txt')
+    cover = _write(
+        tmp_path,
+        'cover.txt',
+        'Cover subject\n\nCover letter body\n\n'
+        'Bcc: Secret Person <secret@example.com>\n',
     )
-    with caplog.at_level(logging.CRITICAL, logger='b4'):
-        with pytest.raises(SystemExit) as ex:
-            b4.ez.get_cover_dests(cbody)
+    _run_prep('--cover-from-file', cover)
+
+    tos, ccs, _tag, _patches = b4.ez.get_prep_branch_as_patches()
+    assert 'secret@example.com' not in {x[1] for x in tos + ccs}
+
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        ['--no-stdin', '--no-interactive', 'send', '--dry-run', '--to', 'list@example.com']
+    )
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit) as ex:
+        b4.ez.cmd_send(cmdargs)
     assert ex.value.code == 1
-    assert 'Bcc trailers in patches are not supported' in caplog.text
+    assert 'Bcc trailers are not supported' in caplog.text
