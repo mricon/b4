@@ -2547,36 +2547,60 @@ class TestSignBeforeConnect:
         assert smtp is None
 
 
-class TestSendMailBcc:
-    def test_send_mail_bcc_envelope(self) -> None:
-        seen_dests: List[List[str]] = []
-        seen_bodies: List[bytes] = []
+class _RecordingSMTP:
+    """Records what send_mail() hands to SMTP: (envelope recipients, data)."""
 
-        class _RecordingSMTP:
-            def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
-                seen_dests.append(list(destaddrs))
-                seen_bodies.append(bdata)
+    def __init__(self) -> None:
+        self.sent: List[Tuple[Set[str], bytes]] = []
 
+    def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
+        self.sent.append((set(destaddrs), bdata))
+
+    def connector(self) -> b4.SMTPConnector:
         def _connect() -> Any:
-            return _RecordingSMTP()
+            return self
 
-        msg = email.message.EmailMessage()
-        msg['From'] = 'alice@example.org'
-        msg['To'] = 'bob@example.org'
+        return b4.SMTPConnector(_connect)
+
+
+class TestSendMailBcc:
+    def test_bcc_only_in_envelope(self) -> None:
+        """Series Bcc addresses and a message's own Bcc header both go only
+        into the envelope. The header is removed before sending, or every
+        recipient would see the hidden ones."""
+        smtp = _RecordingSMTP()
+        msg = _plain_msg('Re: [PATCH] Test patch')
         msg['Cc'] = 'carol@example.org'
-        msg['Subject'] = 'Test patch'
-        msg.set_content('Diff content')
-
+        msg['Bcc'] = 'Secret Reviewer <secret@example.org>'
         sent = b4.send_mail(
-            b4.SMTPConnector(_connect),
+            smtp.connector(),
             [msg],
             fromaddr='alice@example.org',
-            bccaddrs=['dave@example.org', 'eve@example.org'],
+            bccaddrs=['dave@example.org'],
         )
         assert sent == 1
-        assert len(seen_dests) == 1
-        assert set(seen_dests[0]) == {'bob@example.org', 'carol@example.org', 'dave@example.org', 'eve@example.org'}
-        assert b'Bcc:' not in seen_bodies[0]
+        [(dests, bdata)] = smtp.sent
+        assert dests == {
+            'bob@example.org',
+            'carol@example.org',
+            'dave@example.org',
+            'secret@example.org',
+        }
+        assert b'Bcc:' not in bdata
+        assert b'secret@example.org' not in bdata
+
+    def test_ignores_series_bcc_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """send-series-bcc is for b4 send, which passes it in. Every other
+        sender -- b4 ty, review and bugs replies -- must not pick it up on
+        its own and send hidden copies that the user never asked for."""
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'send-series-bcc', 'dave@example.org')
+        smtp = _RecordingSMTP()
+        msg = _plain_msg('Re: [PATCH] Test patch')
+        sent = b4.send_mail(
+            smtp.connector(), [msg], fromaddr='alice@example.org'
+        )
+        assert sent == 1
+        assert [dests for dests, _ in smtp.sent] == [{'bob@example.org'}]
 
     @pytest.mark.parametrize(
         'reply,warned',
@@ -2586,7 +2610,7 @@ class TestSendMailBcc:
             ({'result': 'success'}, True),
         ],
     )
-    def test_send_mail_bcc_web_endpoint(
+    def test_web_endpoint(
         self,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
@@ -2609,12 +2633,7 @@ class TestSendMailBcc:
 
         monkeypatch.setattr(b4, 'get_requests_session', lambda: _FakeSession())
 
-        msg = email.message.EmailMessage()
-        msg['From'] = 'alice@example.org'
-        msg['To'] = 'bob@example.org'
-        msg['Subject'] = 'Test patch'
-        msg.set_content('Diff content')
-
+        msg = _plain_msg('[PATCH] Test patch')
         with caplog.at_level(logging.CRITICAL, logger='b4'):
             sent = b4.send_mail(
                 None,
@@ -2628,7 +2647,7 @@ class TestSendMailBcc:
         assert posted_payload.get('bcc') == ['dave@example.org']
         assert ('did not confirm the Bcc recipients' in caplog.text) is warned
 
-    def test_send_mail_dryrun_shows_bcc(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_dryrun_shows_bcc(self, caplog: pytest.LogCaptureFixture) -> None:
         """No header carries the Bcc recipients, so a dry run has to name
         them, or the user can't check them before sending for real."""
         msg = _plain_msg('[PATCH] Test patch')
@@ -2645,79 +2664,11 @@ class TestSendMailBcc:
         assert 'Bcc (envelope only): dave@example.org, secret@example.org' in caplog.text
         assert 'Bcc:' not in caplog.text
 
-    def test_send_mail_ignores_series_bcc_config(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """send-series-bcc is for b4 send, which passes it in. Every other
-        sender -- b4 ty, review and bugs replies -- must not pick it up on
-        its own and send hidden copies that the user never asked for."""
-        seen_dests: List[List[str]] = []
-
-        class _RecordingSMTP:
-            def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
-                seen_dests.append(list(destaddrs))
-
-        def _connect() -> Any:
-            return _RecordingSMTP()
-
-        monkeypatch.setitem(b4.MAIN_CONFIG, 'send-series-bcc', 'dave@example.org')
-
-        msg = email.message.EmailMessage()
-        msg['From'] = 'alice@example.org'
-        msg['To'] = 'bob@example.org'
-        msg['Subject'] = 'Re: [PATCH] Test patch'
-        msg.set_content('Review reply')
-
-        sent = b4.send_mail(
-            b4.SMTPConnector(_connect), [msg], fromaddr='alice@example.org'
-        )
-        assert sent == 1
-        assert seen_dests == [['bob@example.org']]
-
-    def test_send_mail_per_message_bcc_header(self) -> None:
-        seen_dests: List[List[str]] = []
-        seen_bodies: List[bytes] = []
-
-        class _RecordingSMTP:
-            def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
-                seen_dests.append(list(destaddrs))
-                seen_bodies.append(bdata)
-
-        def _connect() -> Any:
-            return _RecordingSMTP()
-
-        msg = email.message.EmailMessage()
-        msg['From'] = 'alice@example.org'
-        msg['To'] = 'bob@example.org'
-        msg['Bcc'] = 'Secret Reviewer <secret@example.org>'
-        msg['Subject'] = 'Re: [PATCH] Test patch'
-        msg.set_content('Review reply')
-
-        sent = b4.send_mail(
-            b4.SMTPConnector(_connect),
-            [msg],
-            fromaddr='alice@example.org',
-            bccaddrs=['dave@example.org'],
-        )
-        assert sent == 1
-        assert len(seen_dests) == 1
-        assert set(seen_dests[0]) == {
-            'bob@example.org',
-            'dave@example.org',
-            'secret@example.org',
-        }
-        assert msg.get_all('bcc') is None
-        assert b'Bcc:' not in seen_bodies[0]
-        assert b'secret@example.org' not in seen_bodies[0]
-
-    def test_send_mail_per_message_bcc_web_endpoint_rejected(self) -> None:
-        msg = email.message.EmailMessage()
-        msg['From'] = 'alice@example.org'
-        msg['To'] = 'bob@example.org'
+    def test_bcc_header_refused_by_web_endpoint(self) -> None:
+        """The endpoint takes one Bcc list for the whole series and refuses
+        a Bcc: header, so fail before anything is posted."""
+        msg = _plain_msg('[PATCH] Test patch')
         msg['Bcc'] = 'secret@example.org'
-        msg['Subject'] = '[PATCH] Test patch'
-        msg.set_content('Diff content')
-
         with pytest.raises(
             RuntimeError,
             match='Per-patch Bcc headers are not supported with the web endpoint',
@@ -2728,6 +2679,7 @@ class TestSendMailBcc:
                 fromaddr='alice@example.org',
                 web_endpoint='https://example.org/_submit',
             )
+
 
 def _fake_editor(tmp_path: pathlib.Path, body: str) -> str:
     """A stand-in $EDITOR that runs *body* and leaves the buffer alone."""
