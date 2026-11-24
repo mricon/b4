@@ -6657,7 +6657,9 @@ def send_mail(
 
         if not destaddrs:
             alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
-            alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+            alldests += email.utils.getaddresses(
+                [str(x) for x in msg.get_all('cc', [])]
+            )
             myaddrs = {x[1] for x in alldests}
         else:
             myaddrs = set(destaddrs)

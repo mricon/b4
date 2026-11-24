@@ -2609,9 +2609,7 @@ class TestSendMailBcc:
         monkeypatch.setitem(b4.MAIN_CONFIG, 'send-series-bcc', 'dave@example.org')
         smtp = _RecordingSMTP()
         msg = _plain_msg('Re: [PATCH] Test patch')
-        sent = b4.send_mail(
-            smtp.connector(), [msg], fromaddr='alice@example.org'
-        )
+        sent = b4.send_mail(smtp.connector(), [msg], fromaddr='alice@example.org')
         assert sent == 1
         assert [dests for dests, _ in smtp.sent] == [{'bob@example.org'}]
 
@@ -2683,7 +2681,9 @@ class TestSendMailBcc:
                 dryrun=True,
             )
         assert sent == 0
-        assert 'Bcc (envelope only): dave@example.org, secret@example.org' in caplog.text
+        assert (
+            'Bcc (envelope only): dave@example.org, secret@example.org' in caplog.text
+        )
         assert 'Bcc:' not in caplog.text
 
     def test_bcc_header_refused_by_web_endpoint(self) -> None:

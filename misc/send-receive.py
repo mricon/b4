@@ -192,7 +192,9 @@ class SendReceiveListener(object):
     ) -> None:
         resp.status = falcon.HTTP_200
         logger.debug('Returning success: %s', message)
-        resp.text = json.dumps({'result': 'success', 'message': message, **(extra or {})})
+        resp.text = json.dumps(
+            {'result': 'success', 'message': message, **(extra or {})}
+        )
 
     def get_frompair(self) -> Tuple[str, str]:
         afrom = self._config['sendemail'].get('from')

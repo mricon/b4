@@ -2174,7 +2174,14 @@ def test_cover_bcc_trailer_rejected_by_send(
 
     parser = b4.command.setup_parser()
     cmdargs = parser.parse_args(
-        ['--no-stdin', '--no-interactive', 'send', '--dry-run', '--to', 'list@example.com']
+        [
+            '--no-stdin',
+            '--no-interactive',
+            'send',
+            '--dry-run',
+            '--to',
+            'list@example.com',
+        ]
     )
     with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit) as ex:
         b4.ez.cmd_send(cmdargs)
