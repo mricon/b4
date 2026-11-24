@@ -1732,17 +1732,24 @@ class TestLinkRevisionAction:
             await pilot.press('escape')
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize('confirm', [True, False])
-    async def test_link_shows_new_revision(
-        self, tmp_path: pathlib.Path, confirm: bool
+    @pytest.mark.parametrize(
+        'outcome', ['linked', 'cancelled', 'raced-collision', 'no-series']
+    )
+    async def test_link_outcome_shown(
+        self, tmp_path: pathlib.Path, outcome: str
     ) -> None:
-        """A linked revision shows up at once, with no thread update.
+        """Linking reports what really happened and shows the result at once.
 
-        Linking only writes the local DB, so the list must be rebuilt from
-        it straight away: the user should not have to press 'u' before the
-        new revision appears and can be upgraded to.  A network update would
-        add nothing, since the linked revision is one discovery missed, and
-        it could fail offline or block on cron's lock.
+        A linked revision must show up straight away, with no thread update:
+        linking only writes the local DB, so the user should not have to
+        press 'u' before they can upgrade.  A network update would add
+        nothing, since the linked revision is one discovery missed, and it
+        could fail offline or block on cron's lock.
+
+        When nothing is recorded, the user must not be told it was linked.
+        A collision happens when a cron update finds the same revision
+        between the preview and the confirmation; 'no-series' when the
+        fetched series has no message to link.
         """
         identifier = 'test-link-refresh'
         change_id = 'link-1'
@@ -1780,19 +1787,48 @@ class TestLinkRevisionAction:
                 await pilot.pause()
                 assert isinstance(app.screen, LinkRevisionConfirmScreen)
 
-                await pilot.press('enter' if confirm else 'escape')
-                await app.workers.wait_for_complete()
-                await pilot.pause()
+                if outcome == 'raced-collision':
+                    conn = tracking.get_db(identifier)
+                    tracking.add_revision(conn, change_id, 2, 'cron-v2@ex.com')
+                    conn.close()
+                with contextlib.ExitStack() as stack:
+                    if outcome == 'no-series':
+                        stack.enter_context(
+                            patch.object(
+                                tracking, '_series_ref_message', return_value=None
+                            )
+                        )
+                    await pilot.press('escape' if outcome == 'cancelled' else 'enter')
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
 
                 update.assert_not_called()
                 assert app._selected_series is not None
                 assert app._selected_series['change_id'] == change_id
-                revisions = static_text(app.query_one('#detail-revisions', Static))
-                if not confirm:
-                    assert 'v2' not in revisions
+                messages = [n.message for n in app._notifications]
+                warnings = [
+                    n.message for n in app._notifications if n.severity == 'warning'
+                ]
+                if outcome != 'linked':
+                    assert not any(m.startswith('Linked') for m in messages)
+                if outcome == 'raced-collision':
+                    assert any('v2' in w for w in warnings)
+                    # The revision cron recorded is in the DB now, so the
+                    # list must show it even though this link added nothing.
+                    assert 'v2' in static_text(
+                        app.query_one('#detail-revisions', Static)
+                    )
+                if outcome == 'no-series':
+                    assert warnings
+                if outcome in ('cancelled', 'no-series'):
+                    assert 'v2' not in static_text(
+                        app.query_one('#detail-revisions', Static)
+                    )
+                if outcome != 'linked':
                     return
 
-                assert 'v2' in revisions
+                assert 'Linked v2' in messages
+                assert 'v2' in static_text(app.query_one('#detail-revisions', Static))
                 assert any('v1→v2' in row for row in _rendered_rows(app))
                 await pilot.press('a')
                 await pilot.pause()

@@ -4373,7 +4373,22 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             self.notify(f'Could not link revision: {ex}', severity='error')
             return
         rev = result.get('revision')
-        if result.get('absorbed'):
+        status = result.get('status')
+        if status == 'no-series':
+            self.notify(
+                'Nothing linked: no message to link in that series',
+                severity='warning',
+            )
+            return
+        if status == 'collision':
+            # The preview found no such revision, so something else (a cron
+            # update) recorded it in the meantime.  Show it; linking again
+            # offers to replace it if it is the wrong posting.
+            self.notify(
+                f'Nothing linked: v{rev} was tracked meanwhile',
+                severity='warning',
+            )
+        elif result.get('absorbed'):
             self.notify(f'Linked v{rev} (absorbed a duplicate)')
         else:
             self.notify(f'Linked v{rev}')
