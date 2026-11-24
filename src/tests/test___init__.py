@@ -2564,7 +2564,24 @@ class _RecordingSMTP:
 
 
 class TestSendMailBcc:
-    def test_bcc_only_in_envelope(self) -> None:
+    @pytest.mark.parametrize(
+        'reflect,expected',
+        [
+            (
+                False,
+                {
+                    'bob@example.org',
+                    'carol@example.org',
+                    'dave@example.org',
+                    'secret@example.org',
+                },
+            ),
+            # A reflected series is a private preview: hidden recipients
+            # must not get it any more than the visible ones do
+            (True, {'alice@example.org'}),
+        ],
+    )
+    def test_bcc_only_in_envelope(self, reflect: bool, expected: Set[str]) -> None:
         """Series Bcc addresses and a message's own Bcc header both go only
         into the envelope. The header is removed before sending, or every
         recipient would see the hidden ones."""
@@ -2577,15 +2594,11 @@ class TestSendMailBcc:
             [msg],
             fromaddr='alice@example.org',
             bccaddrs=['dave@example.org'],
+            reflect=reflect,
         )
         assert sent == 1
         [(dests, bdata)] = smtp.sent
-        assert dests == {
-            'bob@example.org',
-            'carol@example.org',
-            'dave@example.org',
-            'secret@example.org',
-        }
+        assert dests == expected
         assert b'Bcc:' not in bdata
         assert b'secret@example.org' not in bdata
 
@@ -2603,17 +2616,21 @@ class TestSendMailBcc:
         assert [dests for dests, _ in smtp.sent] == [{'bob@example.org'}]
 
     @pytest.mark.parametrize(
-        'reply,warned',
+        'reflect,reply,warned',
         [
-            ({'result': 'success', 'bcc': 1}, False),
+            (False, {'result': 'success', 'bcc': 1}, False),
             # An endpoint that predates the bcc list ignores it
-            ({'result': 'success'}, True),
+            (False, {'result': 'success'}, True),
+            # A reflect only goes back to the sender, so the list is not
+            # posted and there is nothing to confirm
+            (True, {'result': 'success'}, False),
         ],
     )
     def test_web_endpoint(
         self,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        reflect: bool,
         reply: Dict[str, Any],
         warned: bool,
     ) -> None:
@@ -2641,10 +2658,15 @@ class TestSendMailBcc:
                 fromaddr='alice@example.org',
                 bccaddrs=['dave@example.org'],
                 web_endpoint='https://example.org/_submit',
+                reflect=reflect,
             )
         assert sent == 1
-        assert posted_payload.get('action') == 'receive'
-        assert posted_payload.get('bcc') == ['dave@example.org']
+        if reflect:
+            assert posted_payload.get('action') == 'reflect'
+            assert 'bcc' not in posted_payload
+        else:
+            assert posted_payload.get('action') == 'receive'
+            assert posted_payload.get('bcc') == ['dave@example.org']
         assert ('did not confirm the Bcc recipients' in caplog.text) is warned
 
     def test_dryrun_shows_bcc(self, caplog: pytest.LogCaptureFixture) -> None:

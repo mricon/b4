@@ -459,6 +459,31 @@ def test_client_bcc_is_delivered_logged_and_confirmed(
     assert f'Bcc for {IDENTITY}/default: bob@example.com' in caplog.text
 
 
+def test_reflect_ignores_client_bcc(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dev_key: Key,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A reflect is a private preview for the sender alone. Bcc recipients
+    must not get it, and the log and the reply must not claim they did."""
+    endpoint = Endpoint(
+        tmp_path, monkeypatch, tmp_path / 'auth.sqlite3', extra='max-client-bcc = 2'
+    )
+    endpoint.add_verified_key(dev_key)
+    with caplog.at_level(logging.INFO, logger='b4-send-receive'):
+        res = endpoint.post(
+            action='reflect',
+            messages=[patch_message(dev_key)],
+            bcc=['bob@example.com'],
+        )
+    assert res['result'] == 'success', res
+    assert 'bcc' not in res
+    recipients, _sent = endpoint.mailed[-1]
+    assert list(recipients) == [IDENTITY]
+    assert 'Bcc for' not in caplog.text
+
+
 def test_client_bcc_limit(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
 ) -> None:
