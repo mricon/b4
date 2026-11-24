@@ -126,6 +126,56 @@ def test_shazam_merge_stdin_at_eof(
     assert logstr == cstr
 
 
+@pytest.mark.parametrize(
+    'shazamargs',
+    [
+        pytest.param([], id='apply'),
+        # -H and -M apply in a scratch worktree, a separate git am call.
+        pytest.param(['-H'], id='fetch-head'),
+        pytest.param(['-M'], id='merge'),
+    ],
+)
+def test_shazam_passes_series_url_to_hooks(
+    sampledir: str,
+    gitdir: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shazamargs: List[str],
+) -> None:
+    """Every shazam mode exposes the series URL to git am hooks.
+
+    Projects that refuse Link: trailers record the URL from a hook (in a
+    git note, for example), so a mode that drops it loses that record
+    without telling anyone. The variable must stay out of b4's own
+    environment, or later commands would see a stale series URL.
+    """
+    # The suite may itself be running from a shazam --resolve shell.
+    monkeypatch.delenv('B4_SERIES_URL', raising=False)
+    hooksdir = tmp_path / 'hooks'
+    hooksdir.mkdir()
+    record = tmp_path / 'urls.txt'
+    hook = hooksdir / 'post-applypatch'
+    hook.write_text(f'#!/bin/sh\necho "$B4_SERIES_URL" >> {record}\n')
+    hook.chmod(0o755)
+    b4.git_set_config(gitdir, 'core.hooksPath', str(hooksdir))
+
+    mfile = os.path.join(sampledir, 'shazam-git1-just-series.mbox')
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        ['--no-stdin', '--no-interactive', '--offline-mode', 'shazam', '-m', mfile]
+        + shazamargs
+    )
+    with pytest.raises(SystemExit) as e:
+        b4.mbox.main(cmdargs)
+    assert e.value.code == 0
+
+    # The cover letter's message-id, through the default linkmask.
+    cover_msgid = '20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org'
+    url = f'https://patch.msgid.link/{cover_msgid}'
+    assert record.read_text().splitlines() == [url] * 4
+    assert 'B4_SERIES_URL' not in os.environ
+
+
 def _make_msg(
     subject: str, from_addr: str, date: str, body: str = '', msgid: str = ''
 ) -> EmailMessage:

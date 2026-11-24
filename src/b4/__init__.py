@@ -93,10 +93,19 @@ PW_REST_API_VERSION = '1.2'
 
 
 class AmConflictError(RuntimeError):
-    def __init__(self, worktree_path: str, output: str, base_sha: str = ''):
+    def __init__(
+        self,
+        worktree_path: str,
+        output: str,
+        base_sha: str = '',
+        extra_env: Optional[Dict[str, str]] = None,
+    ):
         self.worktree_path = worktree_path
         self.output = output
         self.base_sha = base_sha
+        # What the parked am ran with, so whoever finishes it runs the
+        # remaining patches' hooks with the same variables.
+        self.extra_env = extra_env
         super().__init__(output)
 
 
@@ -7610,6 +7619,8 @@ def resolve_am_conflict_in_shell(
     counts as "nothing applied" and returns False rather than merging a no-op that
     would silently drop the series. *origin* annotates FETCH_HEAD with the series
     origin instead of the worktree path (see _fetch_and_drop_am_worktree).
+    The subshell gets ``cex.extra_env``, so the hooks of the patches that
+    ``git am --continue`` applies see what the first ``git am`` saw.
     """
     gwt = cex.worktree_path
     logger.critical('---')
@@ -7627,6 +7638,7 @@ def resolve_am_conflict_in_shell(
             'Run "git am --abort" to give up on the whole series.',
             'When done, Ctrl-d returns to b4.',
         ],
+        extra_env=cex.extra_env,
     )
 
     # The am must be finished before we can fetch and merge the series.
@@ -7749,7 +7761,11 @@ def _sparse_patterns_for_paths(paths: Set[str]) -> bytes:
 
 
 def _retry_am_on_full_worktree(
-    gwt: str, ambytes: bytes, amargs: List[str], stopped: Tuple[int, str]
+    gwt: str,
+    ambytes: bytes,
+    amargs: List[str],
+    stopped: Tuple[int, str],
+    env: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, str]:
     """Give a stopped sparse ``git am`` a full (non-sparse) checkout to finish on.
 
@@ -7759,7 +7775,8 @@ def _retry_am_on_full_worktree(
     the ``git am`` stop even when the 3-way is clean -- and a real conflict
     there is recorded with an empty index (no markers to resolve). Drop the
     sparse restriction so every path is present, and apply the stopped patch
-    again. *stopped* is the (exit code, output) of the sparse attempt.
+    again. *stopped* is the (exit code, output) of the sparse attempt, and
+    *env* is the environment it ran with.
 
     Returns the (exit code, output) to go on with: non-zero is a genuine
     conflict the user resolves; zero means only sparseness had blocked the am
@@ -7775,7 +7792,9 @@ def _retry_am_on_full_worktree(
         # and all.
         git_run_command(gwt, ['am', '--abort'], logstderr=True, rundir=gwt)
         git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
-        return git_run_command(gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt)
+        return git_run_command(
+            gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt, env=env
+        )
 
     git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
     ecode, unmerged = git_run_command(gwt, ['ls-files', '--unmerged'], rundir=gwt)
@@ -7783,7 +7802,9 @@ def _retry_am_on_full_worktree(
         # The conflict is already recorded, so there is nothing to apply
         # again: git am refuses to retry on an index with unmerged paths.
         return stopped
-    return git_run_command(gwt, [*amargs, '--retry'], logstderr=True, rundir=gwt)
+    return git_run_command(
+        gwt, [*amargs, '--retry'], logstderr=True, rundir=gwt, env=env
+    )
 
 
 def git_fetch_am_into_repo(
@@ -7794,7 +7815,14 @@ def git_fetch_am_into_repo(
     check_only: bool = False,
     am_flags: Optional[List[str]] = None,
     resolve: bool = False,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> None:
+    """Apply *ambytes* in a scratch worktree and fetch the result.
+
+    *extra_env* adds variables to the environment of the ``git am`` run,
+    which is how its hooks learn about the series. A conflict carries them
+    in AmConflictError for resolve_am_conflict_in_shell.
+    """
     if gitdir is None:
         gitdir = os.getcwd()
     topdir = git_get_toplevel(gitdir)
@@ -7871,8 +7899,9 @@ def git_fetch_am_into_repo(
             amargs = ['am']
         if am_flags:
             amargs.extend(am_flags)
+        am_env = {**os.environ, **extra_env} if extra_env else None
         ecode, out = git_run_command(
-            gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt
+            gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt, env=am_env
         )
         if ecode > 0:
             if resolve:
@@ -7881,12 +7910,12 @@ def git_fetch_am_into_repo(
                 # (recorded with an empty index, no markers) or even a clean
                 # 3-way. Retry on a full worktree to tell them apart.
                 ecode, out = _retry_am_on_full_worktree(
-                    gwt, ambytes, amargs, (ecode, out)
+                    gwt, ambytes, amargs, (ecode, out), env=am_env
                 )
             if ecode > 0:
                 # Genuine conflict: park the am for the user to resolve.
                 cleanup = False
-                raise AmConflictError(gwt, out.strip(), base_sha)
+                raise AmConflictError(gwt, out.strip(), base_sha, extra_env)
             # else: only sparseness blocked it; the series applied cleanly --
             # fall through to the normal fetch-into-FETCH_HEAD path.
         if check_only:
@@ -7923,6 +7952,7 @@ def _suspend_to_shell(
     hint: str = 'b4',
     cwd: Optional[str] = None,
     guidance: Optional[List[str]] = None,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> None:
     """Spawn an interactive sub-shell with a PS1 hint.
 
@@ -7934,6 +7964,7 @@ def _suspend_to_shell(
     *guidance* overrides the default banner lines (the review-oriented "do not
     rewrite commits" advice) with caller-specific instructions -- e.g. the
     git-am conflict flow, where finishing the am does add a commit.
+    *extra_env* adds variables to the sub-shell's environment only.
     """
     logger.info('---')
     if guidance is None:
@@ -7952,6 +7983,8 @@ def _suspend_to_shell(
     shell = os.environ.get('SHELL', '/bin/sh')
     shellname = os.path.basename(shell)
     env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
     env['B4_REVIEW'] = hint
 
     if shellname == 'bash':

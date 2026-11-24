@@ -479,6 +479,23 @@ class TestSuspendToShellCwd:
         _args, kwargs = mock_run.call_args
         assert kwargs['env']['B4_REVIEW'] == 'b4 conflict'
 
+    @patch('b4.subprocess.run')
+    def test_extra_env_reaches_shell_only(
+        self, mock_run: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # git am --continue in this shell runs the remaining patches' hooks,
+        # so they need the same series variables the first am got.
+        from b4 import _suspend_to_shell
+
+        monkeypatch.setenv('SHELL', '/tmp/fakeshell')
+        monkeypatch.delenv('B4_SERIES_URL', raising=False)
+
+        _suspend_to_shell(extra_env={'B4_SERIES_URL': 'https://example.com/x'})
+
+        _args, kwargs = mock_run.call_args
+        assert kwargs['env']['B4_SERIES_URL'] == 'https://example.com/x'
+        assert 'B4_SERIES_URL' not in os.environ
+
 
 class TestConflictResolutionFlow:
     """Integration tests for the conflict resolution workflow.
@@ -758,7 +775,9 @@ def _build_subdir_clean_3way(gitdir: str) -> bytes:
     return mbox.encode()
 
 
-def _trigger_am_conflict(gitdir: str) -> Tuple[b4.AmConflictError, str]:
+def _trigger_am_conflict(
+    gitdir: str, extra_env: Optional[Dict[str, str]] = None
+) -> Tuple[b4.AmConflictError, str]:
     """Run a conflicting multi-patch git-am inside the shazam worktree.
 
     Applying onto HEAD (which carries master's conflicting file1 rewrite) makes
@@ -770,7 +789,12 @@ def _trigger_am_conflict(gitdir: str) -> Tuple[b4.AmConflictError, str]:
     _ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
     with pytest.raises(b4.AmConflictError) as exc_info:
         b4.git_fetch_am_into_repo(
-            gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
+            gitdir,
+            ambytes,
+            at_base='HEAD',
+            am_flags=['-3'],
+            resolve=True,
+            extra_env=extra_env,
         )
     return exc_info.value, head.strip()
 
@@ -857,6 +881,18 @@ class TestShazamResolveInline:
         assert not os.path.exists(wt)
         _e, head_after = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
         assert head_after.strip() == head_before.strip()
+
+    def test_resolve_shell_gets_series_env(self, gitdir: str) -> None:
+        # The hooks of every patch applied by "git am --continue" in the
+        # shell must see the series variables, not just the patches before
+        # the conflict. The conflict carries them from the am to the shell,
+        # so a caller cannot give the two different environments.
+        series_env = {'B4_SERIES_URL': 'https://example.com/x'}
+        cex, _base = _trigger_am_conflict(gitdir, extra_env=series_env)
+
+        with patch('b4._suspend_to_shell') as mock_shell:
+            b4.resolve_am_conflict_in_shell(gitdir, cex)
+        assert mock_shell.call_args.kwargs['extra_env'] == series_env
 
     def test_resolve_aborted_am_tears_down(self, gitdir: str) -> None:
         # Regression: "git am --abort" after a partial multi-patch apply resets the
@@ -1144,3 +1180,48 @@ class TestAmHooksRunOncePerPatch:
         ecode, bar = b4.git_run_command(gitdir, ['show', 'FETCH_HEAD:drivers/bar.txt'])
         assert ecode == 0
         assert 'TEN-from-patch' in bar and 'THIRTEEN-master' in bar
+
+
+@pytest.mark.parametrize(
+    'has_retry',
+    [
+        pytest.param(True, id='am-retry'),
+        # Before git 2.46 the series starts over on the full tree instead.
+        pytest.param(False, id='start-over'),
+    ],
+)
+def test_retried_patch_hook_sees_series_env(
+    gitdir: str, tmp_path: Path, has_retry: bool
+) -> None:
+    """A patch applied on the second try gets the same hook environment.
+
+    When the sparse checkout stops the am, the patch is applied by a second
+    git am call on the full tree. Its hooks must see the series variables
+    too, or a hook that records them would skip just that patch.
+    """
+    hooksdir = tmp_path / 'hooks'
+    hooksdir.mkdir()
+    record = tmp_path / 'urls.txt'
+    hook = hooksdir / 'post-applypatch'
+    hook.write_text(f'#!/bin/sh\necho "$B4_SERIES_URL" >> "{record}"\n')
+    hook.chmod(0o755)
+    b4.git_set_config(gitdir, 'core.hooksPath', str(hooksdir))
+    ambytes = _build_subdir_clean_3way(gitdir)
+
+    with ExitStack() as stack:
+        # An empty sparse set makes the first attempt stop on the patch.
+        stack.enter_context(patch('b4._touched_paths_from_am', return_value=set()))
+        if not has_retry:
+            stack.enter_context(
+                patch('b4.git_check_minimal_version', return_value=False)
+            )
+        b4.git_fetch_am_into_repo(
+            gitdir,
+            ambytes,
+            at_base='HEAD',
+            am_flags=['-3'],
+            resolve=True,
+            extra_env={'B4_SERIES_URL': 'https://example.com/x'},
+        )
+
+    assert record.read_text().splitlines() == ['https://example.com/x']

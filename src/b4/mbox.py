@@ -514,7 +514,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         # note for projects that do not want Link: trailers. They go only to
         # the git am children: os.environ would leak them into later commands.
         series_env = {'B4_SERIES_URL': linkurl}
-        am_env = {**os.environ, **series_env}
         if not cmdargs.makefetchhead:
             amflags = str(config.get('shazam-am-flags', ''))
             sp = shlex.shlex(amflags, posix=True)
@@ -526,7 +525,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 stdin=ambytes,
                 logstderr=True,
                 rundir=topdir,
-                env=am_env,
+                env={**os.environ, **series_env},
             )
             logger.info(out.strip())
             if ecode == 0:
@@ -594,6 +593,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 origin=linkurl,
                 am_flags=am_flags,
                 resolve=cmdargs.shazam_resolve,
+                extra_env=series_env,
             )
         except b4.AmConflictError as cex:
             gwt = cex.worktree_path
