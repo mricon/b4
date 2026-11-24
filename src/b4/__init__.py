@@ -6616,6 +6616,18 @@ def send_mail(
     # Only what the caller passes: send-series-bcc is b4 send's setting,
     # and a hidden copy must never be added behind the caller's back.
     bcc_set: Set[str] = set(bccaddrs) if bccaddrs else set()
+    # Everything else an endpoint is told becomes public anyway, but this
+    # list must stay private. Checked up front, so a dry run fails too.
+    if (
+        bcc_set
+        and web_endpoint
+        and not reflect
+        and not web_endpoint.lower().startswith('https://')
+    ):
+        raise RuntimeError(
+            'Refusing to send the Bcc list to an endpoint that is not https: %s'
+            % web_endpoint
+        )
 
     if patatt_sign:
         # Signing is the one step here that can block indefinitely: with a PGP

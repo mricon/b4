@@ -2680,6 +2680,29 @@ class TestSendMailBcc:
                 web_endpoint='https://example.org/_submit',
             )
 
+    @pytest.mark.parametrize('dryrun', [False, True])
+    def test_bcc_refused_over_plain_http(
+        self, monkeypatch: pytest.MonkeyPatch, dryrun: bool
+    ) -> None:
+        """The Bcc list is the one private thing an endpoint is told, so it
+        must not cross the network in clear text. A dry run fails as well,
+        so the user finds out before the real send."""
+
+        def _no_session() -> None:
+            raise AssertionError('nothing may be posted')
+
+        monkeypatch.setattr(b4, 'get_requests_session', _no_session)
+        msg = _plain_msg('[PATCH] Test patch')
+        with pytest.raises(RuntimeError, match='Bcc.*https'):
+            b4.send_mail(
+                None,
+                [msg],
+                fromaddr='alice@example.org',
+                bccaddrs=['dave@example.org'],
+                dryrun=dryrun,
+                web_endpoint='http://example.org/_submit',
+            )
+
 
 def _fake_editor(tmp_path: pathlib.Path, body: str) -> str:
     """A stand-in $EDITOR that runs *body* and leaves the buffer alone."""
