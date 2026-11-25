@@ -1389,6 +1389,67 @@ class TestSyncReplyTrailers:
         assert f'Reviewed-by: {self.IDENTITY}' in out
 
 
+class TestTrailersAfterSend:
+    """What the trailer menu means once some trailers were already sent."""
+
+    IDENTITY = 'Me <me@x.com>'
+    NACK = f'NACKed-by: {IDENTITY}'
+    RVB = f'Reviewed-by: {IDENTITY}'
+    ACK = f'Acked-by: {IDENTITY}'
+
+    @pytest.mark.parametrize(
+        'selected,sent,expected',
+        [
+            pytest.param(['Reviewed-by'], [], ['Reviewed-by'], id='plain'),
+            pytest.param(
+                ['Reviewed-by', 'NACKed-by'], [], ['NACKed-by'], id='nack-supersedes'
+            ),
+            # The menu shows a sent trailer as ticked.  Ticking NACKed-by
+            # next to a sent Reviewed-by is a new NACK, which supersedes.
+            pytest.param(
+                ['Reviewed-by', 'NACKed-by'], [RVB], ['NACKed-by'], id='nack-after-rvb'
+            ),
+            # Ticking Acked-by next to a sent NACKed-by is a change of mind:
+            # the sent NACK cannot be what the maintainer means now.
+            pytest.param(
+                ['NACKed-by', 'Acked-by'], [NACK], ['Acked-by'], id='ack-after-nack'
+            ),
+            pytest.param(['NACKed-by'], [NACK], ['NACKed-by'], id='nack-unchanged'),
+        ],
+    )
+    def test_selected_names(
+        self, selected: List[str], sent: List[str], expected: List[str]
+    ) -> None:
+        assert review._selected_trailer_names(selected, sent) == expected
+
+    def test_ack_after_sent_nack_is_written_to_buffer(self) -> None:
+        """The follow-up buffer is what gets sent, so the ack must be in it."""
+        out = review._sync_reply_trailers(
+            'Fine now.\n', ['NACKed-by', 'Acked-by'], self.IDENTITY, sent=[self.NACK]
+        )
+        assert self.ACK in out
+        assert 'NACKed-by' not in out
+
+    @pytest.mark.parametrize(
+        'sent,new,expected',
+        [
+            pytest.param([RVB], [], [RVB], id='sent-kept'),
+            pytest.param([RVB], [RVB, ACK], [RVB, ACK], id='new-added-once'),
+            pytest.param([RVB], [NACK], [RVB, NACK], id='nack-after-rvb'),
+            # A NACK I took back must not keep the patch in draft state
+            pytest.param([NACK], [ACK], [ACK], id='ack-withdraws-sent-nack'),
+            pytest.param(
+                [NACK], ['Cc: x@y.z'], [NACK, 'Cc: x@y.z'], id='other-trailer-does-not'
+            ),
+        ],
+    )
+    def test_merge_sent_trailers(
+        self, sent: List[str], new: List[str], expected: List[str]
+    ) -> None:
+        my_review = {'sent': {'trailers': sent}}
+        assert review._merge_sent_trailers(my_review, new) == expected
+
+
 class TestBuildReviewEmailReplyPath:
     """The verbatim reply path must not relocate or duplicate trailers."""
 

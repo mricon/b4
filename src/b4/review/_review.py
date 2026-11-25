@@ -18,7 +18,18 @@ import shutil
 import sys
 import urllib.parse
 from string import Template
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 import liblore.utils
 import requests
@@ -3559,7 +3570,28 @@ def _remove_trailer_from_reply(reply_text: str, name: str) -> str:
     return '\n'.join(out)
 
 
-def _sync_reply_trailers(reply_text: str, selected: List[str], identity: str) -> str:
+def _selected_trailer_names(selected: List[str], sent: Sequence[str]) -> List[str]:
+    """Return the trailer names a trailer menu selection stands for.
+
+    NACKed-by supersedes the other trailers.  The menu shows a sent trailer
+    as ticked, though, so a sent NACKed-by with another trailer ticked next
+    to it now is a change of mind, and the newly ticked ones stand.
+    """
+    if 'NACKed-by' not in selected:
+        return list(selected)
+    sent_lower = {t.split(':', 1)[0].strip().lower() for t in sent}
+    others = [n for n in selected if n != 'NACKed-by']
+    if 'nacked-by' in sent_lower and any(n.lower() not in sent_lower for n in others):
+        return others
+    return ['NACKed-by']
+
+
+def _sync_reply_trailers(
+    reply_text: str,
+    selected: List[str],
+    identity: str,
+    sent: Sequence[str] = (),
+) -> str:
     """Sync the menu-managed trailers in a hand-edited reply buffer.
 
     *selected* is the list of trailer names confirmed in the trailer menu.
@@ -3567,10 +3599,17 @@ def _sync_reply_trailers(reply_text: str, selected: List[str], identity: str) ->
     removed; any other trailer the maintainer typed into the buffer
     (``Fixes:``, ``Cc:``, ``Suggested-by:``, ...) is their own content and
     stays exactly where they put it.  NACKed-by supersedes the other managed
-    trailers.  Returns the updated buffer, line endings normalized.
+    trailers, see _selected_trailer_names().  Trailers in *sent* already went to the list, and the buffer
+    is sent verbatim, so they are kept out of it.  Returns the updated
+    buffer, line endings normalized.
     """
     reply_text = _normalize_line_endings(reply_text)
-    desired = ['NACKed-by'] if 'NACKed-by' in selected else list(selected)
+    sent_lower = {t.split(':', 1)[0].strip().lower() for t in sent}
+    desired = [
+        n
+        for n in _selected_trailer_names(selected, sent)
+        if n.lower() not in sent_lower
+    ]
     desired_lower = {n.lower() for n in desired}
     managed_lower = {n.lower() for n in TRAILER_MENU_NAMES}
     current_lower = {
@@ -3993,10 +4032,18 @@ def _merge_sent_trailers(review: Dict[str, Any], trailers: List[str]) -> List[st
     """Return the sent trailers of *review* followed by the new *trailers*.
 
     A reply buffer edited after a send only holds what is new, so this
-    keeps the sent trailers in the review.
+    keeps the sent trailers in the review.  A sent NACKed-by is the
+    exception: a menu trailer added after it takes the NACK back, and
+    keeping it would hold the patch in draft state for good.
     """
     sent: List[str] = review.get('sent', {}).get('trailers', [])
-    return sent + [t for t in trailers if t not in sent]
+    new = [t for t in trailers if t not in sent]
+    menu_lower = {n.lower() for n in TRAILER_MENU_NAMES} - {_NACK_TRAILER_KEY}
+    if any(t.split(':', 1)[0].strip().lower() in menu_lower for t in new):
+        sent = [
+            t for t in sent if t.split(':', 1)[0].strip().lower() != _NACK_TRAILER_KEY
+        ]
+    return sent + new
 
 
 def _adopt_older_sends(tracking: Dict[str, Any]) -> None:

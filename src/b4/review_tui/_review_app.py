@@ -956,9 +956,12 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 )
             # When a hand-edited buffer exists it is the source of truth, so
             # derive the trailers from it; otherwise fall back to the stored
-            # quick-path list.
+            # quick-path list.  A follow-up buffer does not hold what was
+            # already sent, so add that back.
             if reply:
-                trailers = b4.review._parse_reply_trailers(reply)
+                trailers = b4.review._merge_sent_trailers(
+                    review, b4.review._parse_reply_trailers(reply)
+                )
             else:
                 trailers = review.get('trailers', [])
             if trailers:
@@ -1186,8 +1189,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         existing_reply = review_now.get('reply', '')
         if existing_reply:
             # Pre-toggle from what is actually in the buffer (the source of
-            # truth), not a possibly-stale trailers list.
-            existing_trailers = b4.review._parse_reply_trailers(existing_reply)
+            # truth), not a possibly-stale trailers list.  A follow-up buffer
+            # does not hold what was already sent, so add that back.
+            existing_trailers = b4.review._merge_sent_trailers(
+                review_now, b4.review._parse_reply_trailers(existing_reply)
+            )
         else:
             existing_trailers = review_now.get('trailers', [])
 
@@ -1206,7 +1212,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             reply_text = review.get('reply', '')
             if reply_text:
                 reply_text = b4.review._sync_reply_trailers(
-                    reply_text, result, self._default_identity
+                    reply_text,
+                    result,
+                    self._default_identity,
+                    sent=review.get('sent', {}).get('trailers', []),
                 )
                 review['reply'] = reply_text
                 trailers_now = b4.review._merge_sent_trailers(
@@ -1226,11 +1235,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 return
 
             # Build the new trailer list from the selected names
-            if 'NACKed-by' in result:
-                # NACKed-by replaces all others
-                new_trailers = [f'NACKed-by: {self._default_identity}']
-            else:
-                new_trailers = [f'{name}: {self._default_identity}' for name in result]
+            result = b4.review._selected_trailer_names(
+                result, review.get('sent', {}).get('trailers', [])
+            )
+            new_trailers = [f'{name}: {self._default_identity}' for name in result]
             # If adding to a patch, filter out trailers already on the cover letter
             if self._selected_idx > 0 and new_trailers:
                 cover_trailers = b4.review._get_my_review(

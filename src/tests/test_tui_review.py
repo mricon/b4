@@ -318,6 +318,125 @@ class TestReplyVerbatim:
             )
 
 
+class TestTrailerMenuAfterSend:
+    """A trailer already sent must not end up in a follow-up reply buffer.
+
+    After a send the reply moves out of the review, so a follow-up starts
+    from a fresh buffer that does not hold the sent trailers.  That buffer
+    is sent verbatim, so any sent trailer written into it goes to the list
+    a second time.
+    """
+
+    SENT = 'Reviewed-by: Me <me@example.com>'
+    SENT_NACK = 'NACKed-by: Me <me@example.com>'
+
+    def _app(
+        self, gitdir: str, change_id: str, sent: str, reply: str
+    ) -> Tuple[ReviewApp, str]:
+        """Return (an app whose review of patch 1 sent *sent* and now holds
+        the follow-up buffer *reply*, my email)."""
+        # Two patches, so that a trailer staged on one is not promoted to
+        # the cover letter
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, change_id, ['patch 1', 'patch 2']
+        )
+        session = _build_session(gitdir, branch)
+        my_email = str(session['usercfg']['email'])
+        my_review = {
+            'name': str(session['usercfg']['name']),
+            'trailers': [sent],
+            'sent': {'trailers': [sent]},
+            'sent-revision': 1,
+        }
+        if reply:
+            my_review['reply'] = reply
+        session['patches'][0]['reviews'] = {my_email: my_review}
+        return ReviewApp(session), my_email
+
+    async def _menu(
+        self,
+        gitdir: str,
+        change_id: str,
+        result: Optional[List[str]],
+        sent: str = SENT,
+        reply: str = 'One more thing.\n',
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Open the trailer menu after a send and answer *result*.
+
+        Returns (the menu screen shown, my review after the answer).
+        """
+        shown: List[Any] = []
+
+        def _answer(screen: Any, callback: Any = None) -> None:
+            shown.append(screen)
+            if result is not None:
+                callback(result)
+
+        app, my_email = self._app(gitdir, change_id, sent, reply)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_idx = 1
+            with mock.patch.object(app, 'push_screen', _answer):
+                app.action_trailer()
+            await pilot.pause()
+            return shown[0], app._patches[0]['reviews'][my_email]
+
+    @pytest.mark.asyncio
+    async def test_sent_trailer_shown_ticked(self, gitdir: str) -> None:
+        screen, _review = await self._menu(gitdir, 'trailer-sent-ticked', None)
+        assert 'Reviewed-by' in screen._existing
+
+    @pytest.mark.asyncio
+    async def test_sent_trailer_not_written_to_buffer(self, gitdir: str) -> None:
+        """Confirming the menu with the sent trailer ticked leaves it out of
+        the buffer, and keeps it in the review as sent."""
+        _screen, my_review = await self._menu(
+            gitdir, 'trailer-sent-confirm', ['Reviewed-by']
+        )
+        assert 'Reviewed-by' not in my_review['reply']
+        assert my_review['trailers'] == [self.SENT]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'reply',
+        [
+            pytest.param('Fine now.\n', id='follow-up-buffer'),
+            pytest.param('', id='no-buffer'),
+        ],
+    )
+    async def test_ack_after_sent_nack_takes_over(
+        self, gitdir: str, reply: str
+    ) -> None:
+        """The sent NACKed-by shows ticked, and it supersedes the others.
+        Ticking Acked-by next to it must still stage the ack, or there is
+        no way to take a NACK back."""
+        _screen, my_review = await self._menu(
+            gitdir,
+            f'trailer-ack-after-nack-{bool(reply)}',
+            ['NACKed-by', 'Acked-by'],
+            sent=self.SENT_NACK,
+            reply=reply,
+        )
+        assert [t.split(':')[0] for t in my_review['trailers']] == ['Acked-by']
+        if reply:
+            assert 'Acked-by: ' in my_review['reply']
+
+    @pytest.mark.asyncio
+    async def test_sent_trailer_stays_in_overlay(self, gitdir: str) -> None:
+        """The follow-up buffer does not hold the sent trailer, but it is
+        still part of my review and must not vanish from its summary."""
+        app, _my_email = self._app(
+            gitdir, 'trailer-sent-overlay', self.SENT, 'One more thing.\n'
+        )
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_idx = 1
+            overlay = app.query_one('#trailer-overlay')
+            with mock.patch.object(overlay, 'update') as update:
+                app._refresh_trailer_overlay()
+            assert 'Reviewed-by' in update.call_args.args[0].plain
+
+
 class TestFollowupSelection:
     """Per-message follow-up selection is scoped to the patch being shown."""
 
