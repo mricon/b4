@@ -4,7 +4,7 @@
 """Builders for synthetic email messages."""
 
 import email.message
-from typing import Optional
+from typing import List, Optional
 
 AUTHOR = 'Author <author@example.com>'
 
@@ -69,3 +69,58 @@ def make_msg(
     else:
         msg.set_payload(body)
     return msg
+
+
+def followup_thread(patch_msgid: str) -> List[email.message.EmailMessage]:
+    """A one-patch thread with every kind of follow-up the parsers must tell apart.
+
+    - ``alt@x``: an additional patch posted as a reply
+    - ``on-alt@x``: a reply quoting that additional patch
+    - ``on-p1@x``: a reply quoting the series patch
+    - ``no-re@x``: a reply whose mailer dropped the "Re:"
+    """
+    alt_diff = MINIMAL_DIFF.replace('bar();', 'baz();')
+    subject = 'Re: [PATCH] foo: fix bar'
+    return [
+        make_msg(
+            patch_msgid, '[PATCH] foo: fix bar', from_addr=AUTHOR, body=MINIMAL_DIFF
+        ),
+        make_msg(
+            'alt@x',
+            subject,
+            from_addr='Other <other@example.com>',
+            in_reply_to=patch_msgid,
+            references=f'<{patch_msgid}>',
+            date='Mon, 23 Mar 2026 13:00:00 +0000',
+            body='How about this instead?\n\n' + alt_diff,
+        ),
+        make_msg(
+            'on-alt@x',
+            subject,
+            from_addr='Rev <rev@example.com>',
+            in_reply_to='alt@x',
+            references=f'<{patch_msgid}> <alt@x>',
+            date='Mon, 23 Mar 2026 14:00:00 +0000',
+            body='> +    baz();\n\nbaz is wrong.\n',
+        ),
+        make_msg(
+            'on-p1@x',
+            subject,
+            from_addr='Rev <rev@example.com>',
+            in_reply_to=patch_msgid,
+            references=f'<{patch_msgid}>',
+            date='Mon, 23 Mar 2026 15:00:00 +0000',
+            body='> +    bar();\n\nbar is fine.\n',
+        ),
+        # Some mailers drop the "Re:"; with no diff or trailer either,
+        # LoreMailbox files this under unknowns rather than followups.
+        make_msg(
+            'no-re@x',
+            '[PATCH] foo: fix bar',
+            from_addr='Rev <rev@example.com>',
+            in_reply_to=patch_msgid,
+            references=f'<{patch_msgid}>',
+            date='Mon, 23 Mar 2026 16:00:00 +0000',
+            body='> +    bar();\n\nbar needs a comment.\n',
+        ),
+    ]

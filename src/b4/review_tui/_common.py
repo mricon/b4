@@ -709,56 +709,6 @@ def _write_followup_comments(
             viewer.write(panel)
 
 
-_FOLLOWUP_MAX_DEPTH = 5
-
-
-def _get_followup_depth(
-    in_reply_to: Optional[str],
-    patch_msgids: Dict[str, int],
-    msgid_map: Dict[str, 'b4.LoreMessage'],
-) -> int:
-    """Return the threading depth of a follow-up relative to its patch.
-
-    Depth 0 = direct reply to a patch; depth N = N hops through follow-up
-    replies. Capped at _FOLLOWUP_MAX_DEPTH to prevent runaway indentation.
-    """
-    depth = 0
-    seen: Set[str] = set()
-    current = in_reply_to
-    while current and current not in seen:
-        if current in patch_msgids:
-            break
-        seen.add(current)
-        lmsg = msgid_map.get(current)
-        if lmsg is None:
-            break
-        depth += 1
-        current = lmsg.in_reply_to
-    return min(depth, _FOLLOWUP_MAX_DEPTH)
-
-
-def _resolve_patch_for_followup(
-    in_reply_to: Optional[str],
-    patch_msgids: Dict[str, int],
-    msgid_map: Dict[str, 'b4.LoreMessage'],
-) -> Optional[int]:
-    """Walk the in_reply_to chain to find which patch a follow-up belongs to.
-
-    Returns the display index (0=cover, 1..N=patches) or None.
-    """
-    seen: Set[str] = set()
-    current = in_reply_to
-    while current and current not in seen:
-        if current in patch_msgids:
-            return patch_msgids[current]
-        seen.add(current)
-        lmsg = msgid_map.get(current)
-        if lmsg is None:
-            break
-        current = lmsg.in_reply_to
-    return None
-
-
 def _write_comments(
     viewer: 'RichLog',
     entries: List[Tuple[str, str, str]],

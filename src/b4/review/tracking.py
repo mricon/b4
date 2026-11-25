@@ -2789,7 +2789,7 @@ def get_thread_mbox(topdir: str, blob_sha: str) -> Optional[bytes]:
     return out
 
 
-def _resolve_patch_for_followup_local(
+def _resolve_patch_for_followup(
     in_reply_to: Optional[str],
     patch_msgids: Dict[str, int],
     msgid_map: Dict[str, Any],
@@ -2797,7 +2797,6 @@ def _resolve_patch_for_followup_local(
     """Walk the in_reply_to chain to find which patch a follow-up belongs to.
 
     Returns the display index (0=cover, 1..N=patches) or None.
-    Duplicated from review_tui._common to avoid a cross-layer import.
     """
     seen: set[str] = set()
     current = in_reply_to
@@ -2812,7 +2811,7 @@ def _resolve_patch_for_followup_local(
     return None
 
 
-def _get_followup_depth_local(
+def _get_followup_depth(
     in_reply_to: Optional[str],
     patch_msgids: Dict[str, int],
     msgid_map: Dict[str, Any],
@@ -2822,7 +2821,6 @@ def _get_followup_depth_local(
 
     Depth 0 = direct reply to a patch; depth N = N hops through follow-up
     replies. Capped at max_depth to prevent runaway indentation.
-    Duplicated from review_tui._common to avoid a cross-layer import.
     """
     depth = 0
     seen: Set[str] = set()
@@ -2873,8 +2871,9 @@ def _parse_msgs_to_followup_comments(
 ) -> Dict[int, List[Dict[str, Any]]]:
     """Parse email messages into a followup-comments dict.
 
-    Returns Dict[display_idx -> List[{body, fromname, fromemail, date}]].
-    display_idx 0 = cover letter, 1..N = patches.
+    Returns Dict[display_idx -> List[entry]], oldest entry first, where
+    display_idx 0 = cover letter, 1..N = patches.  See the entry dict
+    below for what each follow-up carries.
     """
     minimised = b4.mbox.minimize_thread(list(msgs))
     minimised_body_map: Dict[str, str] = {}
@@ -2901,8 +2900,10 @@ def _parse_msgs_to_followup_comments(
             patch_msgids[pmsgid] = i + 1
 
     followup_comments: Dict[int, List[Dict[str, Any]]] = {}
-    for lmsg in sorted(lmbx.followups, key=lambda m: m.date):
-        display_idx = _resolve_patch_for_followup_local(
+    # A reply whose mailer dropped the "Re:" and that carries no diff or
+    # trailer is filed under unknowns, but it is a follow-up all the same.
+    for lmsg in sorted(lmbx.followups + lmbx.unknowns, key=lambda m: m.date):
+        display_idx = _resolve_patch_for_followup(
             lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
         )
         if display_idx is None:
@@ -2924,12 +2925,14 @@ def _parse_msgs_to_followup_comments(
             'date': lmsg.date,
             'msgid': lmsg.msgid,
             'subject': lmsg.subject,
-            'depth': _get_followup_depth_local(
+            'depth': _get_followup_depth(
                 lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
             ),
             'replies-to-diff': _chain_has_additional_patch(
                 lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
             ),
+            # The TUI replies to a follow-up through its message
+            'lmsg': lmsg,
         }
         followup_comments.setdefault(display_idx, []).append(entry)
 

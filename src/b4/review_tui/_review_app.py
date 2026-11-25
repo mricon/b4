@@ -22,7 +22,6 @@ from textual.events import Click
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
 
 import b4
-import b4.mbox
 import b4.review
 import b4.review.tracking
 import liblore
@@ -34,12 +33,10 @@ from b4.review_tui._common import (
     LoreNodeShutdownMixin,
     SeparatedFooter,
     _fix_ansi_theme,
-    _get_followup_depth,
     _has_review_data,
     _make_initials,
     _quiet_worker,
     _render_email_to_viewer,
-    _resolve_patch_for_followup,
     _suspend_to_shell,
     _wait_for_enter,
     _write_comments,
@@ -1900,84 +1897,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         """Parse msgs into follow-up comments and refresh the display."""
         cover_msgid = self._series.get('header-info', {}).get('msgid')
 
-        # Minimise for body parsing (strips deep quoting, signatures)
-        minimised = b4.mbox.minimize_thread(list(msgs))
-        minimised_body_map: Dict[str, str] = {}
-        for mmsg in minimised:
-            mid = b4.LoreMessage.clean_header(mmsg.get('Message-ID', ''))
-            if mid:
-                mid = mid.strip('<>')
-                payload = mmsg.get_payload(decode=True)
-                if isinstance(payload, bytes):
-                    minimised_body_map[mid] = payload.decode(errors='replace')
-                elif isinstance(payload, str):
-                    minimised_body_map[mid] = payload
-
-        # Build LoreMailbox from original messages for msgid_map + followups
-        lmbx = b4.LoreMailbox()
-        for msg in msgs:
-            lmbx.add_message(msg)
-
-        # Build patch_msgids: msgid -> display_idx
-        patch_msgids: Dict[str, int] = {}
-        if cover_msgid:
-            patch_msgids[cover_msgid] = 0
-        for i, pmeta in enumerate(self._patches):
-            pmsgid = pmeta.get('header-info', {}).get('msgid')
-            if pmsgid:
-                patch_msgids[pmsgid] = i + 1
-
-        self._followup_comments = {}
-        count = 0
-
-        all_followups = lmbx.followups + lmbx.unknowns
-        for lmsg in sorted(all_followups, key=lambda m: m.date):
-            display_idx = _resolve_patch_for_followup(
-                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
-            )
-            if display_idx is None:
-                continue
-
-            mbody = minimised_body_map.get(lmsg.msgid, '').strip()
-            if not mbody:
-                continue
-            # Skip messages where minimize_thread reduced the body to
-            # just an attribution line (e.g. trailer-only follow-ups
-            # where get_body_parts already extracted the trailers).
-            mbody_lines = [ln for ln in mbody.splitlines() if ln.strip()]
-            if len(mbody_lines) <= 2 and mbody_lines[-1].strip().endswith(':'):
-                continue
-            # minimize_thread strips trailers from the body; re-append
-            # them so the follow-up panel shows the full message.
-            _htrs, _cmsg, mtrs, _basement, _sig = b4.LoreMessage.get_body_parts(
-                lmsg.body
-            )
-            if mtrs:
-                trailer_block = '\n'.join(t.as_string() for t in mtrs)
-                mbody = mbody.rstrip('\n') + '\n\n' + trailer_block
-
-            entry: Dict[str, Any] = {
-                'body': mbody,
-                'fromname': lmsg.fromname,
-                'fromemail': lmsg.fromemail,
-                'date': lmsg.date,
-                'msgid': lmsg.msgid,
-                'subject': lmsg.full_subject,
-                'reply': lmsg.reply,
-                'depth': _get_followup_depth(
-                    lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
-                ),
-                'lmsg': lmsg,
-                'replies-to-diff': b4.review.tracking._chain_has_additional_patch(
-                    lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
-                ),
-            }
-            self._followup_comments.setdefault(display_idx, []).append(entry)
-            count += 1
-
-        # Sort each list by date
-        for fc_list in self._followup_comments.values():
-            fc_list.sort(key=lambda e: e['date'])
+        self._followup_comments = b4.review.tracking._parse_msgs_to_followup_comments(
+            msgs, cover_msgid, self._patches
+        )
+        count = sum(len(fc_list) for fc_list in self._followup_comments.values())
 
         # Extract inline diff comments from follow-ups that quote patches
         inline_count = self._integrate_followup_inline(self._followup_comments)

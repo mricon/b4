@@ -29,6 +29,7 @@ import b4.review.tracking
 from b4.review_tui._common import filter_range_diff_for_commit
 from b4.review_tui._review_app import FollowupItem, PatchListItem, ReviewApp
 
+from .helpers.mail import followup_thread
 from .helpers.tracking import create_review_branch
 from .helpers.tui import CUT_BUFFER, CUT_INSTRUCTION, CUT_TRIMMED
 
@@ -1029,3 +1030,27 @@ class TestPatchListItemPreMountStyling:
         """The held reference must be what compose() yields, not a copy."""
         item = PatchListItem('a patch', 1, 'done')
         assert list(item.compose()) == [item._label]
+
+
+class TestLoadFollowupMsgs:
+    """What the follow-up pane gets from a thread."""
+
+    @pytest.mark.asyncio
+    async def test_every_reply_loaded(self, gitdir: str) -> None:
+        """What each entry holds is covered by TestParseFollowupComments;
+        this checks that the pane gets them all, replies without "Re:"
+        included."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'load-followups', ['patch 1']
+        )
+        app = ReviewApp(_build_session(gitdir, branch))
+        patch_msgid = app._patches[0]['header-info']['msgid']
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with mock.patch.object(app, '_save_tracking'):
+                app._load_followup_msgs(followup_thread(patch_msgid))
+            await pilot.pause()
+
+        entries = {e['msgid']: e for e in app._followup_comments[1]}
+        assert sorted(entries) == ['alt@x', 'no-re@x', 'on-alt@x', 'on-p1@x']
+        assert entries['on-alt@x']['depth'] == 1

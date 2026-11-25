@@ -28,7 +28,7 @@ from b4.review_tui._tracking_app import (
     _format_snooze_until,
 )
 
-from .helpers.mail import AUTHOR, MINIMAL_DIFF, make_msg
+from .helpers.mail import AUTHOR, MINIMAL_DIFF, followup_thread
 from .helpers.tracking import add_worktree, create_review_branch, make_tracking_data
 
 
@@ -5517,61 +5517,33 @@ class TestCmdTrackHonoursNoStdin:
         assert 'Retrieving series: piped@example.com' in caplog.text
 
 
-class TestFollowupRepliesToDiff:
-    """Follow-ups under an additional patch posted in the thread are marked.
+class TestParseFollowupComments:
+    """_parse_msgs_to_followup_comments() feeds both the TUI and the agent's
+    thread context, so it must see every reply and say what it replies to."""
 
-    Their quoted diff is from that additional patch, not from the series
-    patch they are filed under, so it must not become inline review
-    comments on the series patch.
-    """
-
-    @staticmethod
-    def _thread() -> List[EmailMessage]:
-        alt_diff = MINIMAL_DIFF.replace('bar();', 'baz();')
-        subject = 'Re: [PATCH] foo: fix bar'
-        return [
-            make_msg(
-                'p1@x', '[PATCH] foo: fix bar', from_addr=AUTHOR, body=MINIMAL_DIFF
-            ),
-            make_msg(
-                'alt@x',
-                subject,
-                from_addr='Other <other@example.com>',
-                in_reply_to='p1@x',
-                references='<p1@x>',
-                date='Mon, 23 Mar 2026 13:00:00 +0000',
-                body='How about this instead?\n\n' + alt_diff,
-            ),
-            make_msg(
-                'on-alt@x',
-                subject,
-                from_addr='Rev <rev@example.com>',
-                in_reply_to='alt@x',
-                references='<p1@x> <alt@x>',
-                date='Mon, 23 Mar 2026 14:00:00 +0000',
-                body='> +    baz();\n\nbaz is wrong.\n',
-            ),
-            make_msg(
-                'on-p1@x',
-                subject,
-                from_addr='Rev <rev@example.com>',
-                in_reply_to='p1@x',
-                references='<p1@x>',
-                date='Mon, 23 Mar 2026 15:00:00 +0000',
-                body='> +    bar();\n\nbar is fine.\n',
-            ),
-        ]
+    def _parse(self) -> Dict[int, List[Dict[str, Any]]]:
+        return review_tracking._parse_msgs_to_followup_comments(
+            followup_thread('p1@x'), None, [{'header-info': {'msgid': 'p1@x'}}]
+        )
 
     @pytest.mark.parametrize(
         'msgid,expected',
         [
+            # Its quoted diff is the additional patch's, not the series
+            # patch's it is filed under, so it must not become inline
+            # comments on the series patch.
             pytest.param('on-alt@x', True, id='reply-to-additional-patch'),
             pytest.param('on-p1@x', False, id='reply-to-series-patch'),
         ],
     )
-    def test_marked(self, msgid: str, expected: bool) -> None:
-        followups = review_tracking._parse_msgs_to_followup_comments(
-            self._thread(), None, [{'header-info': {'msgid': 'p1@x'}}]
-        )
-        entry = next(e for e in followups[1] if e['msgid'] == msgid)
+    def test_replies_to_diff_marked(self, msgid: str, expected: bool) -> None:
+        entry = next(e for e in self._parse()[1] if e['msgid'] == msgid)
         assert entry.get('replies-to-diff') is expected
+
+    def test_reply_without_re_prefix_included(self) -> None:
+        assert 'no-re@x' in [e['msgid'] for e in self._parse()[1]]
+
+    def test_entries_carry_their_message(self) -> None:
+        """The TUI replies to a follow-up through its LoreMessage."""
+        for entry in self._parse()[1]:
+            assert entry['lmsg'].msgid == entry['msgid']
