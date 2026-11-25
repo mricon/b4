@@ -1,0 +1,171 @@
+From foo@z Thu Jan  1 00:00:00 1970
+From: Test Test <test@example.com>
+Subject: [PATCH v2] junk: fix stale junk references
+To: Some List <list-1@lists.example.com>
+Cc: Mai Ntainer <mai-ntainer@example.com>
+Date: Mon, 23 Nov 2026 11:09:03 +0800
+Message-Id: <orig-message@example.com>
+
+Quilt-style maintainer notifications that quote this patch must not
+displace it from the series.
+
+Reviewed-by: Original Reviewer <original-reviewer@example.com>
+Signed-off-by: Test Test <test@example.com>
+---
+ b4/junk.py | 2 +-
+ b4/more.py | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/b4/junk.py b/b4/junk.py
+index 12345678..23456789 100644
+--- a/b4/junk.py
++++ b/b4/junk.py
+@@ -10,7 +10,7 @@ def junk():
+ 
+ 
+ def more_junk():
+-    return 'junk1'
++    return 'junk2'
+ 
+ 
+ def even_more_junk():
+diff --git a/b4/more.py b/b4/more.py
+index 34567890..45678901 100644
+--- a/b4/more.py
++++ b/b4/more.py
+@@ -1,3 +1,3 @@
+ # More junk
+-JUNK = 1
++JUNK = 2
+ # The end
+-- 
+2.wong.fu
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Mai Ntainer <mai-ntainer@example.com>
+Subject: + junk-fix-stale-junk-references.patch added to junk-unstable branch
+To: test@example.com, mai-ntainer@example.com
+Date: Sun, 22 Nov 2026 21:38:58 -0800
+Message-Id: <mm-commits-added@example.com>
+In-Reply-To: <orig-message@example.com>
+
+
+The patch titled
+     Subject: junk: fix stale junk references
+has been added to the -junk junk-unstable branch.  Its filename is
+     junk-fix-stale-junk-references.patch
+
+------------------------------------------------------
+From: Test Test <test@example.com>
+Subject: junk: fix stale junk references
+Date: Mon, 23 Nov 2026 11:09:03 +0800
+
+Quilt-style maintainer notifications that quote this patch must not
+displace it from the series.
+
+Link: https://patch.msgid.link/orig-message@example.com
+Reviewed-by: Original Reviewer <original-reviewer@example.com>
+Acked-by: Collected Elsewhere <collected-elsewhere@example.com>
+Signed-off-by: Test Test <test@example.com>
+Signed-off-by: Mai Ntainer <mai-ntainer@example.com>
+Cc: Dev Eloper1 <dev-eloper1@example.com>
+
+ b4/junk.py |    2 +-
+ b4/more.py |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+--- a/b4/junk.py~junk-fix-stale-junk-references
++++ a/b4/junk.py
+@@ -10,7 +10,7 @@ def junk():
+ 
+ 
+ def more_junk():
+-    return 'junk1'
++    return 'junk2'
+ 
+ 
+ def even_more_junk():
+--- a/b4/more.py~junk-fix-stale-junk-references
++++ a/b4/more.py
+@@ -1,3 +1,3 @@
+ # More junk
+-JUNK = 1
++JUNK = 2
+ # The end
+_
+
+Patches currently in -junk which might be from test@example.com are
+
+junk-fix-stale-junk-references.patch
+
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Followup Reviewer1 <followup-reviewer1@example.com>
+Subject: Re: [PATCH v2] junk: fix stale junk references
+Date: Mon, 23 Nov 2026 12:00:00 +0800
+Message-Id: <fwup-message-1@example.com>
+In-Reply-To: <orig-message@example.com>
+References: <orig-message@example.com>
+
+> Quilt-style maintainer notifications that quote this patch must not
+> displace it from the series.
+
+Reviewed-by: Followup Reviewer1 <followup-reviewer1@example.com>
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Mai Ntainer <mai-ntainer@example.com>
+Subject: [merged] junk-fix-stale-junk-references.patch removed from -junk tree
+To: test@example.com, mai-ntainer@example.com
+Date: Tue, 24 Nov 2026 00:41:24 -0800
+Message-Id: <mm-commits-merged@example.com>
+In-Reply-To: <orig-message@example.com>
+
+
+The quilt patch titled
+     Subject: junk: fix stale junk references
+has been removed from the -junk tree.  Its filename was
+     junk-fix-stale-junk-references.patch
+
+This patch was dropped because it was merged into the junk-stable branch.
+
+------------------------------------------------------
+From: Test Test <test@example.com>
+Subject: junk: fix stale junk references
+Date: Mon, 23 Nov 2026 11:09:03 +0800
+
+Quilt-style maintainer notifications that quote this patch must not
+displace it from the series.
+
+Link: https://patch.msgid.link/orig-message@example.com
+Reviewed-by: Original Reviewer <original-reviewer@example.com>
+Acked-by: Collected Elsewhere <collected-elsewhere@example.com>
+Signed-off-by: Test Test <test@example.com>
+Signed-off-by: Mai Ntainer <mai-ntainer@example.com>
+
+ b4/junk.py |    2 +-
+ b4/more.py |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+--- a/b4/junk.py~junk-fix-stale-junk-references
++++ a/b4/junk.py
+@@ -10,7 +10,7 @@ def junk():
+ 
+ 
+ def more_junk():
+-    return 'junk1'
++    return 'junk2'
+ 
+ 
+ def even_more_junk():
+--- a/b4/more.py~junk-fix-stale-junk-references
++++ a/b4/more.py
+@@ -1,3 +1,3 @@
+ # More junk
+-JUNK = 1
++JUNK = 2
+ # The end
+_
+
+Patches currently in -junk which might be from test@example.com are
+
+

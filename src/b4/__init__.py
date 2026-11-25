@@ -759,6 +759,24 @@ class LoreMailbox:
             self.msgid_map[lmsg.msgid] = lmsg
         logger.debug('            msgid: %s', lmsg.msgid)
 
+        if (
+            not lmsg.reply
+            and lmsg.has_diff
+            and not lmsg.lsubject.patch
+            and lmsg.counters_inferred
+            and lmsg.in_reply_to
+            and (parent := self.msgid_map.get(lmsg.in_reply_to)) is not None
+            and parent.has_diff
+            and LoreMessage.get_diff_hash(lmsg.body)
+            == LoreMessage.get_diff_hash(parent.body)
+        ):
+            # A maintainer's "applied" notice (e.g. akpm's mm-commits) quotes
+            # the patch it replies to. Requiring an identical diff keeps any
+            # reply that carries different code visible as a patch. Its trailer
+            # block belongs to the quoted patch, so collect none from it.
+            logger.debug('  quotes the parent patch verbatim, treating as reply')
+            lmsg.reply = True
+
         if lmsg.reply:
             # We'll figure out where this belongs later
             logger.debug('  adding to followups')
@@ -3176,6 +3194,22 @@ class LoreMessage:
         if ecode > 0 or not len(out.strip()):
             return None
         return out.split(maxsplit=1)[0]
+
+    @staticmethod
+    def get_diff_hash(body: str) -> Optional[str]:
+        """Hash only the diff in a message body, ignoring how it was made.
+
+        Unlike git patch-id, this also works for diffs that lack "diff --git"
+        headers, such as the quilt output in akpm's mm-commits notices, so a
+        quilt copy of a patch hashes the same as the git original.
+        """
+        start = DIFF_RE.search(body)
+        if not start:
+            return None
+        diff = body[start.start() :].rsplit('\n-- \n', 1)[0]
+        # quilt writes "--- a/file~patchname" for the old side
+        diff = re.sub(r'^(---\s+\S+?)~\S*$', r'\1', diff, flags=re.M)
+        return LoreMessage.get_patchwork_hash(diff)
 
     @staticmethod
     def get_patchwork_hash(diff: str) -> str:

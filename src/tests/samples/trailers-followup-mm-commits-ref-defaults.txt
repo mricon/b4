@@ -1,0 +1,45 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v2] junk: fix stale junk references
+From: Test Test <test@example.com>
+Date: Mon, 23 Nov 2026 11:09:03 +0800
+Message-Id: <orig-message@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Quilt-style maintainer notifications that quote this patch must not
+displace it from the series.
+
+Reviewed-by: Original Reviewer <original-reviewer@example.com>
+Signed-off-by: Test Test <test@example.com>
+Reviewed-by: Followup Reviewer1 <followup-reviewer1@example.com>
+---
+ b4/junk.py | 2 +-
+ b4/more.py | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/b4/junk.py b/b4/junk.py
+index 12345678..23456789 100644
+--- a/b4/junk.py
++++ b/b4/junk.py
+@@ -10,7 +10,7 @@ def junk():
+ 
+ 
+ def more_junk():
+-    return 'junk1'
++    return 'junk2'
+ 
+ 
+ def even_more_junk():
+diff --git a/b4/more.py b/b4/more.py
+index 34567890..45678901 100644
+--- a/b4/more.py
++++ b/b4/more.py
+@@ -1,3 +1,3 @@
+ # More junk
+-JUNK = 1
++JUNK = 2
+ # The end
+-- 
+2.wong.fu
+

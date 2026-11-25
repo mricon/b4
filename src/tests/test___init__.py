@@ -480,6 +480,7 @@ def test_trailer_addr_parsing(
         ('bare-address', {}, {}, 'defaults', {}),
         ('stripped-lines', {}, {}, 'defaults', {}),
         ('htmljunk', {}, {}, 'defaults', {}),
+        ('mm-commits', {}, {}, 'defaults', {}),
     ],
 )
 def test_followup_trailers(
@@ -503,6 +504,27 @@ def test_followup_trailers(
     b4.save_git_am_mbox(amsgs, ifh)
     with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
         assert ifh.getvalue().decode() == fh.read()
+
+
+def test_reply_quoting_a_modified_patch_stays_a_patch(sampledir: str) -> None:
+    """A maintainer notice whose diff differs from its parent is not a follow-up.
+
+    Only an exact copy of the parent's diff marks a notice as a mere
+    "applied" message. Once the diff changed (a folded-in fixup, or a
+    different patch sent in reply), it is new code and must stay visible.
+    """
+    lmbx = b4.LoreMailbox()
+    for msg in b4.get_msgs_from_mailbox_or_maildir(
+        f'{sampledir}/trailers-followup-mm-commits.mbox'
+    ):
+        if b4.LoreMessage.get_clean_msgid(msg) == 'mm-commits-added@example.com':
+            body = msg.get_payload()
+            assert isinstance(body, str)
+            msg.set_payload(body.replace("+    return 'junk2'", "+    return 'junk3'"))
+        lmbx.add_message(msg)
+    followups = {lmsg.msgid for lmsg in lmbx.followups}
+    assert 'mm-commits-added@example.com' not in followups
+    assert 'mm-commits-merged@example.com' in followups
 
 
 def _followup_trailer_keys(lser: b4.LoreSeries) -> List[List[Tuple[str, str, str]]]:
