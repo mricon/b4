@@ -105,6 +105,43 @@ class TestCollectTrackedSeries:
         )
         assert {e['change_id'] for e in entries} == {'cid-new', 'cid-wait'}
 
+    @pytest.mark.parametrize(
+        'statuses, expected',
+        [
+            pytest.param(['landed'], {'cid-landed'}, id='landed'),
+            # The stored status still matches, as in the tracking list's s:
+            pytest.param(['reviewing'], {'cid-landed', 'cid-partly'}, id='stored'),
+        ],
+    )
+    def test_status_filter_finds_landed_series(
+        self, statuses: List[str], expected: set[str]
+    ) -> None:
+        """--status landed lists the series the tracking list shows as landed.
+
+        A series already accepted keeps its status even when everything has
+        landed, like in the tracking list.
+        """
+        _seed('proj', 'cid-landed', status='reviewing', num_patches=2)
+        _seed('proj', 'cid-partly', status='reviewing', num_patches=2)
+        _seed('proj', 'cid-taken', status='accepted', num_patches=1)
+        conn = review_tracking.get_db('proj')
+        review_tracking.set_landed_patches(
+            conn,
+            {
+                'cid-landed-p1@example.com': 'c1',
+                'cid-landed-p2@example.com': 'c2',
+                'cid-partly-p2@example.com': 'c3',
+                'cid-taken-p1@example.com': 'c4',
+            },
+        )
+        conn.close()
+
+        entries = review_tracking.collect_tracked_series(
+            identifiers=['proj'], statuses=statuses
+        )
+
+        assert {e['change_id'] for e in entries} == expected
+
     def test_message_ids_union_all_three_tables(self) -> None:
         """A hit on any patch of a tracked series has to be recognisable."""
         _seed('proj', 'cid-1', num_patches=3, message_id='cover@example.com')

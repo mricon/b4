@@ -1004,14 +1004,18 @@ def collect_tracked_series(
     wanted.discard('all')
 
     entries: List[Dict[str, Any]] = []
-    for identifier, _topdir in resolve_projects(
+    for identifier, topdir in resolve_projects(
         identifiers, force_all=all_projects, cmdargs=cmdargs
     ):
         msgids = get_all_series_message_ids(identifier)
-        for series in get_all_tracked_series(identifier):
+        all_series = get_all_tracked_series(identifier)
+        mark_landed_series(identifier, all_series, topdir)
+        for series in all_series:
             status = series['status']
             if wanted:
-                if status not in wanted:
+                # Landed is shown, never stored, so it is matched apart
+                landed = 'landed' in wanted and series['landed']
+                if status not in wanted and not landed:
                     continue
             elif not show_all and status == 'archived':
                 continue
@@ -1174,12 +1178,73 @@ def is_pw_series_tracked(identifier: str, pw_series_id: int) -> bool:
         return False
 
 
+# Statuses a fully landed series is shown as 'landed' instead of: the
+# maintainer has not taken it, and nobody needs to review it any more.
+# Later statuses belong to the take -> thank -> archive chain and are kept.
+LANDED_REPLACES = ('new', 'reviewing', 'replied', 'waiting')
+
+
+def _has_unsent_work(topdir: str, change_id: str) -> bool:
+    """Return True if the maintainer has anything left to send for a series."""
+    import b4.review as _b4_review
+
+    branch = f'b4/review/{change_id}'
+    if not b4.git_branch_exists(topdir, branch):
+        return False
+    try:
+        _cover_text, tracking = _b4_review.load_tracking(topdir, branch)
+    except (SystemExit, Exception) as ex:
+        # Better to keep showing a series than to hide work nobody can see
+        logger.debug('Could not read %s, assuming unsent work: %s', branch, ex)
+        return True
+    usercfg = b4.get_user_config()
+    targets = [tracking.get('series', {})] + tracking.get('patches', [])
+    return any(
+        _b4_review._has_unsent(_b4_review._get_my_review(target, usercfg))
+        for target in targets
+    )
+
+
+def mark_landed_series(
+    identifier: str, series_list: List[Dict[str, Any]], topdir: Optional[str]
+) -> None:
+    """Set ``landed`` on each entry of *series_list*: is it shown as landed?
+
+    A landed series is sorted with the inactive ones, so it must have
+    nothing left to do: every patch of its tracked revision is in a remote
+    listed in b4.review-check-landed, the maintainer has not taken it, no
+    newer revision is known, and nothing of the maintainer's is unsent.
+
+    This is the one place that decides, so that the tracking list and
+    ``b4 review list`` always agree. *series_list* holds entries from
+    get_all_tracked_series().
+    """
+    conn = get_db(identifier)
+    try:
+        newest = get_all_newest_revisions(conn)
+    finally:
+        conn.close()
+    for series in series_list:
+        change_id = series.get('change_id', '')
+        num_patches = series.get('num_patches') or 0
+        series['landed'] = (
+            series.get('status', 'new') in LANDED_REPLACES
+            and num_patches > 0
+            and len(series.get('landed_positions') or []) >= num_patches
+            and newest.get(change_id, 0) <= int(series.get('revision') or 1)
+            # Last, because it is the only check that has to ask git
+            and not (topdir and _has_unsent_work(topdir, change_id))
+        )
+
+
 def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
     """Get all tracked series for the TUI listing.
 
     Returns a list of dicts with keys: track_id, change_id, revision, subject,
     sender_name, sender_email, sent_at, added_at, status, num_patches,
-    message_id, pw_series_id, message_count, seen_message_count.
+    message_id, pw_series_id, message_count, seen_message_count, and
+    landed_positions (the 1-based positions of the tracked revision's
+    patches that have landed on a checked remote).
 
     The ``attestation`` field carries the live trust-on-first-use status
     of each signature, and ``tofu`` its details (see
@@ -1222,6 +1287,18 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                     'is_rethreaded': bool(row[17]),
                     'snoozed_until': row[18],
                 }
+            )
+        # One query for every series, rather than one per row
+        landed: Dict[Tuple[str, int], List[int]] = {}
+        for change_id, revision, position in conn.execute(
+            'SELECT sp.change_id, sp.revision, sp.position FROM series_patches sp'
+            ' JOIN landed_patches lp ON lp.message_id = sp.message_id'
+            ' WHERE sp.position > 0 ORDER BY sp.position'
+        ):
+            landed.setdefault((change_id, int(revision)), []).append(int(position))
+        for entry in result:
+            entry['landed_positions'] = landed.get(
+                (entry['change_id'], int(entry['revision'])), []
             )
         try:
             _resolve_attestation(conn, result)

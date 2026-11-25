@@ -266,10 +266,11 @@ DIFFSTAT_RE = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M |
 # Body lines that mboxrd escapes by adding one more '>'
 MBOXRD_FROM_RE = re.compile(rb'^(>*From )', flags=re.M)
 
-# Every status a tracked series can hold.  The first ten are the ones the
-# tracking TUI draws a symbol for; 'archived' is set when a series is filed
-# away and has no symbol because it is never shown.  ('taken' is absent on
-# purpose -- schema v3 migrated it to 'accepted'.)
+# Every status a tracked series can hold or be shown with.  All but the last
+# are the ones the tracking TUI draws a symbol for; 'queued' and 'landed' are
+# derived for display and never stored.  'archived' is set when a series is
+# filed away and has no symbol because it is never shown.  ('taken' is absent
+# on purpose -- schema v3 migrated it to 'accepted'.)
 REVIEW_SERIES_STATUSES: Tuple[str, ...] = (
     'new',
     'reviewing',
@@ -280,6 +281,7 @@ REVIEW_SERIES_STATUSES: Tuple[str, ...] = (
     'queued',
     'snoozed',
     'thanked',
+    'landed',
     'gone',
     'archived',
 )

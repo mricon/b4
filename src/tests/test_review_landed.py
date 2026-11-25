@@ -465,6 +465,18 @@ def test_landed_state_yields_to_anything_the_maintainer_did(
     assert b4.review._get_patch_state(patch, {'email': ME}) == expected
 
 
+def test_tracked_series_list_the_landed_patches_of_their_revision() -> None:
+    """The tracking list needs the landed positions to show partly landed series."""
+    _track('listed')
+    conn = review_tracking.get_db(IDENT)
+    review_tracking.set_landed_patches(conn, {'listed-v1-p2@example.com': 'abc'})
+    conn.close()
+
+    series = review_tracking.get_all_tracked_series(IDENT)
+
+    assert [s['landed_positions'] for s in series] == [[2]]
+
+
 def test_show_info_names_the_landed_patches(gitdir: str) -> None:
     """Scripts and review agents cannot read the database, so show-info tells them.
 
@@ -482,3 +494,53 @@ def test_show_info_names_the_landed_patches(gitdir: str) -> None:
     conn.close()
 
     assert b4.review.get_review_info(gitdir, branch)['landed-patches'] == '1 2'
+
+
+@pytest.mark.parametrize(
+    'status, why, expected',
+    [
+        pytest.param('reviewing', 'all-landed', True, id='all-landed'),
+        pytest.param('reviewing', 'partly', False, id='partly'),
+        # The take -> thank -> archive chain keeps its own statuses
+        pytest.param('accepted', 'all-landed', False, id='already-taken'),
+        # The newer revision has not landed, and it needs a look
+        pytest.param('waiting', 'newer-revision', False, id='newer-revision'),
+        # Landed must never hide the maintainer's own work
+        pytest.param('reviewing', 'unsent-reply', False, id='unsent-reply'),
+        pytest.param('replied', 'sent-reply', True, id='sent-reply'),
+    ],
+)
+def test_series_is_landed_only_when_nothing_is_left_to_do(
+    gitdir: str, status: str, why: str, expected: bool
+) -> None:
+    """A landed series sinks to the inactive ones, so nothing may be pending on it."""
+    change_id = 'series'
+    _track(change_id, status=status)
+    branch = _review_branch(gitdir, change_id)
+    conn = review_tracking.get_db(IDENT)
+    review_tracking.set_landed_patches(
+        conn,
+        {
+            f'{change_id}-v1-p{i}@example.com': f'c{i}'
+            for i in ((2,) if why == 'partly' else (1, 2))
+        },
+    )
+    if why == 'newer-revision':
+        review_tracking.add_revision(
+            conn, change_id, 2, f'{change_id}-v2-p0@example.com'
+        )
+    conn.close()
+    if why in ('unsent-reply', 'sent-reply'):
+        cover_text, tracking = b4.review.load_tracking(gitdir, branch)
+        review = b4.review._ensure_my_review(
+            tracking['patches'][0], b4.get_user_config()
+        )
+        review['reply'] = 'This breaks the build.'
+        if why == 'sent-reply':
+            b4.review._mark_review_sent(review, 1)
+        assert b4.review.save_tracking_ref(gitdir, branch, cover_text, tracking)
+
+    series = review_tracking.get_all_tracked_series(IDENT)
+    review_tracking.mark_landed_series(IDENT, series, gitdir)
+
+    assert [s['landed'] for s in series] == [expected]

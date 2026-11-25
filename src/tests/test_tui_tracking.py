@@ -27,7 +27,7 @@ import pytest
 pytest.importorskip('textual')
 
 from textual.app import App
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Input, ListView, Static
 
 import b4
@@ -62,7 +62,9 @@ from b4.review_tui._tracking_app import (
     TrackingApp,
     _build_base_suggestions,
     _detect_initial_base,
+    _display_status,
     _effective_tier,
+    _format_positions,
     _resolve_worktree_take_conflict,
     _shazam_merge_flags,
     _take_worktree,
@@ -428,10 +430,104 @@ class TestEffectiveTier:
             ),
             # A queued (accepted) series keeps its queued tier regardless
             pytest.param({'status': 'accepted', 'queued': True}, 2, id='queued'),
+            # A fully landed series needs no more review work
+            pytest.param({'status': 'reviewing', 'landed': True}, 2, id='landed'),
         ],
     )
     def test_effective_tier(self, series: Dict[str, Any], tier: int) -> None:
         assert _effective_tier(series) == tier
+
+
+class TestLandedSeries:
+    """A series shows as landed once every patch is in a checked remote."""
+
+    @pytest.mark.parametrize(
+        'series, expected',
+        [
+            pytest.param(
+                {'status': 'reviewing', 'landed': True}, 'landed', id='landed'
+            ),
+            pytest.param({'status': 'reviewing'}, 'reviewing', id='stored'),
+            pytest.param(
+                {'status': 'accepted', 'queued': True, 'landed': True},
+                'queued',
+                id='queued',
+            ),
+        ],
+    )
+    def test_display_status(self, series: Dict[str, Any], expected: str) -> None:
+        assert _display_status(series) == expected
+
+    @pytest.mark.parametrize(
+        'positions, expected',
+        [([2], '2'), ([1, 2, 3, 5], '1-3, 5'), ([1, 3, 4, 7, 8, 9], '1, 3-4, 7-9')],
+    )
+    def test_format_positions(self, positions: List[int], expected: str) -> None:
+        assert _format_positions(positions) == expected
+
+    @pytest.mark.parametrize(
+        'pattern, matches',
+        [('s:landed', True), ('s:review', True), ('s:accepted', False)],
+    )
+    def test_status_limit_matches_landed(self, pattern: str, matches: bool) -> None:
+        """s:landed finds landed series; the stored status still matches too."""
+        series = {'status': 'reviewing', 'landed': True}
+        assert TrackingApp._matches_limit(series, pattern) is matches
+
+    @pytest.mark.asyncio
+    async def test_list_and_details_show_landed_patches(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        seed_db(
+            'test-landed',
+            [
+                {
+                    'change_id': cid,
+                    'subject': f'[PATCH 0/3] {cid}',
+                    'num_patches': 3,
+                    'status': 'new',
+                    'patch_rows': True,
+                }
+                for cid in ('all-landed', 'some-landed', 'none-landed')
+            ],
+        )
+        conn = tracking.get_db('test-landed')
+        tracking.set_landed_patches(
+            conn,
+            {
+                **{f'all-landed-p{i}@example.com': f'c{i}' for i in (1, 2, 3)},
+                'some-landed-p1@example.com': 'c4',
+                'some-landed-p3@example.com': 'c5',
+            },
+        )
+        conn.close()
+        app = TrackingApp('test-landed')
+
+        async with app.run_test(size=(140, 40)) as pilot:
+            await settle_tracking_app(app, pilot)
+            items = {
+                item.series['change_id']: item
+                for item in app.query_one('#tracking-list', ListView).children
+                if isinstance(item, TrackedSeriesItem)
+            }
+            labels = {cid: item.render_label().plain for cid, item in items.items()}
+            assert '  ↓' in labels['all-landed']
+            assert '  ★' in labels['some-landed']
+
+            expected = {
+                'all-landed': 'all 3 patches',
+                'some-landed': 'patches 1, 3 of 3',
+                'none-landed': None,
+            }
+            for cid, text in expected.items():
+                app._show_details(items[cid].series)
+                row = app.query_one('#detail-landed-row', Horizontal)
+                assert row.display is (text is not None)
+                if text:
+                    assert (
+                        str(static_text(app.query_one('#detail-landed', Static)))
+                        == text
+                    )
 
 
 class TestTrackingStatusGroups:

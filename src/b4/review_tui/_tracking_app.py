@@ -136,6 +136,7 @@ _STATUS_SYMBOLS: Dict[str, str] = {
     'queued': '◷',  # U+25F7 white circle with upper right quadrant
     'snoozed': '⏸',  # U+23F8 double vertical bar
     'thanked': '✓',  # U+2713 check mark
+    'landed': '↓',  # U+2193 downwards arrow (matches the review app)
     'gone': 'ø',  # U+00F8 latin small letter o with stroke
 }
 
@@ -153,8 +154,36 @@ _STATUS_TIER: Dict[str, int] = {
     'snoozed': 2,
     'waiting': 2,
     'thanked': 2,
+    'landed': 2,
     'gone': 2,
 }
+
+
+def _display_status(series: Dict[str, Any]) -> str:
+    """Return the status to show for *series*.
+
+    Usually the stored status, but two display-only states are never stored:
+    'queued' for an accepted series whose thank-you is waiting to go out,
+    and 'landed' for one that tracking.mark_landed_series() marked.
+    """
+    if series.get('queued'):
+        return 'queued'
+    if series.get('landed'):
+        return 'landed'
+    return str(series.get('status', 'new'))
+
+
+def _format_positions(positions: List[int]) -> str:
+    """Format patch positions compactly, e.g. [1, 2, 3, 5] as '1-3, 5'."""
+    runs: List[List[int]] = []
+    for position in sorted(positions):
+        if runs and position == runs[-1][-1] + 1:
+            runs[-1].append(position)
+        else:
+            runs.append([position])
+    return ', '.join(
+        str(run[0]) if len(run) == 1 else f'{run[0]}-{run[-1]}' for run in runs
+    )
 
 
 def _effective_tier(series: Dict[str, Any]) -> int:
@@ -166,7 +195,7 @@ def _effective_tier(series: Dict[str, Any]) -> int:
     the other actionable series instead of staying buried among the inactive
     ones at the bottom of the list.
     """
-    status = 'queued' if series.get('queued') else series.get('status', 'new')
+    status = _display_status(series)
     if status == 'waiting' and series.get('has_newer'):
         return 0
     return _STATUS_TIER.get(status, 2)
@@ -981,8 +1010,7 @@ class TrackedSeriesItem(ListItem):
         submitter = self.series.get('sender_name', 'Unknown')
         num_patches = self.series.get('num_patches', 0)
         status = self.series.get('status', 'new')
-        effective = 'queued' if self.series.get('queued') else status
-        symbol = _STATUS_SYMBOLS.get(effective, '?')
+        symbol = _STATUS_SYMBOLS.get(_display_status(self.series), '?')
         # The only suffix left in the status column is '*' (tracking data
         # needs a refresh).  An available upgrade is shown by the version
         # token in the subject prefix instead -- see version_token().
@@ -1280,6 +1308,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             with Horizontal(classes='details-row', id='detail-attestation-row'):
                 yield Static('Attestation:', classes='details-label')
                 yield Static('', id='detail-attestation')
+            with Horizontal(classes='details-row', id='detail-landed-row'):
+                yield Static('Landed:', classes='details-label')
+                yield Static('', id='detail-landed', markup=False)
             with Horizontal(classes='details-row'):
                 yield Static('Sent:', classes='details-label')
                 yield Static('', id='detail-sent', markup=False)
@@ -1443,6 +1474,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if branch_name in art_map:
                 series['art'] = art_map[branch_name]
 
+        try:
+            b4.review.tracking.mark_landed_series(
+                self._identifier, self._all_series, topdir
+            )
+        except Exception as ex:
+            logger.debug('Could not tell which series have landed: %s', ex)
+
         # Tag accepted series that have a queued thank-you letter.
         # This is a display-only pseudo-state, not stored in the DB.
         queued_cids = b4.ty.get_queued_change_ids(dryrun=self._email_dryrun)
@@ -1490,6 +1528,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         (AND logic).
         """
 
+        def _status_matches(s: Dict[str, Any], needle: str) -> bool:
+            # Display-only states (landed, queued) are what the S column
+            # shows, so they match as well as the stored status does
+            stored = str(s.get('status') or '').lower()
+            return needle in stored or needle in _display_status(s)
+
         def _up_matches(s: Dict[str, Any], needle: str) -> bool:
             # Boolean filter on has_newer: `up:` / `up:1` / `up:yes` keep
             # only upgradable series; `up:no` / `up:0` / `up:false` invert.
@@ -1499,7 +1543,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             series,
             pattern,
             {
-                's:': limit_substring_matcher('status'),
+                's:': _status_matches,
                 't:': limit_substring_matcher('target_branch'),
                 'up:': _up_matches,
             },
@@ -2491,6 +2535,19 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 att_row.display = True
             else:
                 att_row.display = False
+
+        landed = series.get('landed_positions') or []
+        landed_row = self.query_one('#detail-landed-row', Horizontal)
+        landed_row.display = bool(landed)
+        if landed:
+            if len(landed) >= num_patches:
+                landed_str = (
+                    'the patch' if num_patches == 1 else f'all {num_patches} patches'
+                )
+            else:
+                noun = 'patch' if len(landed) == 1 else 'patches'
+                landed_str = f'{noun} {_format_positions(landed)} of {num_patches}'
+            self.query_one('#detail-landed', Static).update(landed_str)
 
         # Show known revisions (precomputed in _load_series)
         revisions_row = self.query_one('#detail-revisions-row', Horizontal)
