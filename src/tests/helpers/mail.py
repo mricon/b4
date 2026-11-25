@@ -4,6 +4,7 @@
 """Builders for synthetic email messages."""
 
 import email.message
+from email.message import EmailMessage
 from typing import List, Optional
 
 AUTHOR = 'Author <author@example.com>'
@@ -124,3 +125,46 @@ def followup_thread(patch_msgid: str) -> List[email.message.EmailMessage]:
             body='> +    bar();\n\nbar needs a comment.\n',
         ),
     ]
+
+
+def pos_diff(n: int) -> str:
+    """A self-contained one-file diff, distinct per patch position."""
+    return (
+        f'Change part {n}.\n\n'
+        'Signed-off-by: Author <author@example.com>\n'
+        '---\n'
+        f' f{n}.c | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n\n'
+        f'diff --git a/f{n}.c b/f{n}.c\n'
+        'index aaa..bbb 100644\n'
+        f'--- a/f{n}.c\n'
+        f'+++ b/f{n}.c\n'
+        '@@ -1,3 +1,4 @@\n'
+        f' void f{n}(void) {{\n'
+        f'+    bar{n}();\n'
+        ' }\n'
+    )
+
+
+def series_msgs(
+    base: str, author: str, rev: int, n: int, cover: bool = False
+) -> list[EmailMessage]:
+    """Return the messages making up an n-patch series at the given revision."""
+    msgs: list[EmailMessage] = []
+    if cover:
+        msg = EmailMessage()
+        msg['Subject'] = f'[PATCH v{rev} 0/{n}] {base}: do things better'
+        msg['From'] = author
+        msg['Date'] = 'Thu, 19 Mar 2026 08:51:10 +0530'
+        msg['Message-Id'] = f'<{base}-v{rev}-p0@example.com>'
+        msg.set_payload('This series makes things better.\n')
+        msgs.append(msg)
+    for i in range(1, n + 1):
+        msg = EmailMessage()
+        msg['Subject'] = f'[PATCH v{rev} {i}/{n}] {base}: part {i}'
+        msg['From'] = author
+        msg['Date'] = 'Thu, 19 Mar 2026 08:51:12 +0530'
+        msg['Message-Id'] = f'<{base}-v{rev}-p{i}@example.com>'
+        msg.set_payload(pos_diff(i))
+        msgs.append(msg)
+    return msgs

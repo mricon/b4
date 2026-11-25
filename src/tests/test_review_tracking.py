@@ -28,7 +28,12 @@ from b4.review_tui._tracking_app import (
     _format_snooze_until,
 )
 
-from .helpers.mail import AUTHOR, MINIMAL_DIFF, followup_thread
+from .helpers.mail import (
+    AUTHOR,
+    MINIMAL_DIFF,
+    followup_thread,
+    series_msgs,
+)
 from .helpers.tracking import add_worktree, create_review_branch, make_tracking_data
 
 
@@ -3539,49 +3544,6 @@ class TestFetchSeriesForLink:
 # ---------------------------------------------------------------------------
 
 
-def _pos_diff(n: int) -> str:
-    """A self-contained one-file diff, distinct per patch position."""
-    return (
-        f'Change part {n}.\n\n'
-        'Signed-off-by: Author <author@example.com>\n'
-        '---\n'
-        f' f{n}.c | 1 +\n'
-        ' 1 file changed, 1 insertion(+)\n\n'
-        f'diff --git a/f{n}.c b/f{n}.c\n'
-        'index aaa..bbb 100644\n'
-        f'--- a/f{n}.c\n'
-        f'+++ b/f{n}.c\n'
-        '@@ -1,3 +1,4 @@\n'
-        f' void f{n}(void) {{\n'
-        f'+    bar{n}();\n'
-        ' }\n'
-    )
-
-
-def _series_msgs(
-    base: str, author: str, rev: int, n: int, cover: bool = False
-) -> list[EmailMessage]:
-    """Return the messages making up an n-patch series at the given revision."""
-    msgs: list[EmailMessage] = []
-    if cover:
-        msg = EmailMessage()
-        msg['Subject'] = f'[PATCH v{rev} 0/{n}] {base}: do things better'
-        msg['From'] = author
-        msg['Date'] = 'Thu, 19 Mar 2026 08:51:10 +0530'
-        msg['Message-Id'] = f'<{base}-v{rev}-p0@example.com>'
-        msg.set_payload('This series makes things better.\n')
-        msgs.append(msg)
-    for i in range(1, n + 1):
-        msg = EmailMessage()
-        msg['Subject'] = f'[PATCH v{rev} {i}/{n}] {base}: part {i}'
-        msg['From'] = author
-        msg['Date'] = 'Thu, 19 Mar 2026 08:51:12 +0530'
-        msg['Message-Id'] = f'<{base}-v{rev}-p{i}@example.com>'
-        msg.set_payload(_pos_diff(i))
-        msgs.append(msg)
-    return msgs
-
-
 def _build_lmbx(
     base: str, author: str, rev: int, n: int, cover: bool = False
 ) -> 'b4.LoreMailbox':
@@ -3592,7 +3554,7 @@ def _build_lmbx(
     tests do not run ``get_series()``).
     """
     lmbx = b4.LoreMailbox()
-    for msg in _series_msgs(base, author, rev, n, cover=cover):
+    for msg in series_msgs(base, author, rev, n, cover=cover):
         lmbx.add_message(msg)
     return lmbx
 
@@ -3873,8 +3835,8 @@ class TestUpdateSeriesTrackingCoverSubject:
         )
         conn.close()
 
-        msgs = _series_msgs('thing', AUTHOR, 1, 3, cover=True)
-        msgs += _series_msgs('thing', AUTHOR, 2, 3, cover=True)
+        msgs = series_msgs('thing', AUTHOR, 1, 3, cover=True)
+        msgs += series_msgs('thing', AUTHOR, 2, 3, cover=True)
         result = self._update(identifier, change_id, 1, msgs)
 
         assert result['error'] is None
@@ -3913,7 +3875,7 @@ class TestUpdateSeriesTrackingCoverSubject:
         )
         conn.close()
 
-        msgs = _series_msgs('thing', AUTHOR, 2, 3, cover=True)
+        msgs = series_msgs('thing', AUTHOR, 2, 3, cover=True)
         result = self._update(identifier, change_id, 2, msgs)
 
         assert result['error'] is None
@@ -3941,7 +3903,7 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
     @classmethod
     def _late_review_of_v1(cls) -> list[EmailMessage]:
         """Patch 1 of v1, and a review of it sent after v2 came out."""
-        v1_patch = _series_msgs('thing', AUTHOR, 1, 2, cover=True)[1]
+        v1_patch = series_msgs('thing', AUTHOR, 1, 2, cover=True)[1]
         reply = EmailMessage()
         reply['Subject'] = 'Re: [PATCH v1 1/2] thing: part 1'
         reply['From'] = 'Late Reviewer <late@example.com>'
@@ -3992,7 +3954,7 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
             mock.patch('b4.can_network', True),
             mock.patch(
                 'b4.review._review.retrieve_series_messages',
-                return_value=_series_msgs('thing', AUTHOR, 2, 2, cover=True),
+                return_value=series_msgs('thing', AUTHOR, 2, 2, cover=True),
             ),
             mock.patch(
                 'b4.mbox.get_extra_series', side_effect=lambda msgs, **_kw: msgs
@@ -5092,7 +5054,7 @@ class TestCmdTrackRetrievalFailure:
             argparse.Namespace(repo_path=gitdir, identifier='track-lookup')
         )
         monkeypatch.setattr(b4, 'can_network', True)
-        msgs = _series_msgs('lookup', AUTHOR, 1, 2)
+        msgs = series_msgs('lookup', AUTHOR, 1, 2)
 
         with (
             mock.patch(
