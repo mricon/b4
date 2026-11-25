@@ -24,6 +24,7 @@ from textual.widgets import Checkbox, Input, Label, ListView, Select, Static
 
 import b4
 import b4.bugs
+import b4.review.landed
 import liblore
 from b4.review_tui._modals import (
     TRACKING_HELP_LINES,
@@ -880,6 +881,7 @@ class TestUpdateAllScreenCancellation:
             identifier: str,
             linkmask: str,
             topdir: Optional[str] = None,
+            landed_index: Optional[b4.review.landed.LandedIndex] = None,
         ) -> Dict[str, Any]:
             nonlocal call_count
             call_count += 1

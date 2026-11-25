@@ -37,6 +37,7 @@ import requests
 import b4
 import b4.mbox
 import b4.review
+import b4.review.landed
 import b4.review.tracking
 import b4.tofu
 import b4.ty
@@ -2622,8 +2623,12 @@ def update_series_tracking(
     identifier: str,
     linkmask: str,
     topdir: Optional[str] = None,
+    landed_index: Optional['b4.review.landed.LandedIndex'] = None,
 ) -> Dict[str, Any]:
     """Fetch thread, discover revisions, update trailers for one series.
+
+    With *landed_index*, also records which patches have landed on the
+    configured remotes. Without one, the landed patches stay as they were.
 
     Returns {'new_revisions': int, 'new_trailers': int,
              'error': Optional[str]}.
@@ -2765,6 +2770,22 @@ def update_series_tracking(
     if lser_att is not None:
         att = check_series_attestation(lser_att)
         b4.review.tracking.update_attestation(identifier, change_id, current_rev, att)
+
+    # Recomputed on every update rather than kept once found: a patch
+    # dropped from a remote (e.g. a linux-next rebuild) is no longer landed.
+    if landed_index is not None and lser is not None:
+        by_msgid: Dict[str, Optional[str]] = {}
+        for pmsg in lser.patches[1:]:
+            if pmsg is None:
+                continue
+            match = landed_index.find(pmsg)
+            by_msgid[pmsg.msgid] = match[0] if match else None
+        try:
+            conn = b4.review.tracking.get_db(identifier)
+            b4.review.tracking.set_landed_patches(conn, by_msgid)
+            conn.close()
+        except Exception as ex:
+            logger.warning('Could not record landed patches: %s', ex)
 
     # Record all discovered revisions in SQLite through the shared helper, so
     # a revision is identified by its cover letter when the author sent one.
@@ -2947,6 +2968,36 @@ def _get_update_lock_path(identifier: str) -> str:
     return os.path.join(reviewdir, f'{identifier}.update.lock')
 
 
+def _build_landed_index(
+    topdir: Optional[str], series_list: List[Dict[str, Any]]
+) -> Optional['b4.review.landed.LandedIndex']:
+    """Index the configured remotes once for a whole sweep.
+
+    Built even when no remotes are configured, so that removing them from
+    the config clears what was landed. Returns None when the remotes could
+    not be read, which must not be mistaken for "nothing has landed".
+    """
+    if not topdir:
+        return None
+    sent: List[datetime.datetime] = []
+    for series in series_list:
+        try:
+            sent_at = datetime.datetime.fromisoformat(str(series.get('sent_at')))
+        except ValueError:
+            continue
+        if sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=datetime.timezone.utc)
+        sent.append(sent_at)
+    posted_since = min(sent) if sent else datetime.datetime.now(datetime.timezone.utc)
+    try:
+        return b4.review.landed.LandedIndex.build(
+            topdir, b4.review.landed.get_landed_remotes(topdir), posted_since
+        )
+    except RuntimeError as ex:
+        logger.warning('Could not check for landed patches: %s', ex)
+        return None
+
+
 def update_all_tracking(
     identifier: str,
     linkmask: str,
@@ -3003,6 +3054,8 @@ def update_all_tracking(
                 if s.get('status') not in ('snoozed', 'archived')
             ]
 
+        landed_index = _build_landed_index(topdir, series_list)
+
         total = len(series_list)
         for i, series in enumerate(series_list):
             if cancel_cb and cancel_cb():
@@ -3018,7 +3071,11 @@ def update_all_tracking(
                 # patch seam for tests and TUI callers alike
                 with b4.track_lore_sources() as sources:
                     r = b4.review.update_series_tracking(
-                        series, identifier, linkmask, topdir=topdir
+                        series,
+                        identifier,
+                        linkmask,
+                        topdir=topdir,
+                        landed_index=landed_index,
                     )
             except liblore.OperationCancelledError:
                 result['cancelled'] = True

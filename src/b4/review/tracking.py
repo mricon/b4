@@ -28,7 +28,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SERIES_PATCHES_DDL = """
 CREATE TABLE IF NOT EXISTS series_patches (
@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS series_patches (
     message_id TEXT NOT NULL,
     subject    TEXT,
     PRIMARY KEY (change_id, revision, position)
+)"""
+
+# Keyed by message-id rather than by series position: landed is a fact about
+# a posted message, and series_patches rows are deleted and re-inserted by
+# several code paths that know nothing about landed patches.
+LANDED_PATCHES_DDL = """
+CREATE TABLE IF NOT EXISTS landed_patches (
+    message_id TEXT PRIMARY KEY,
+    landed_commit TEXT NOT NULL
 )"""
 
 SCHEMA_SQL = (
@@ -90,6 +99,8 @@ CREATE INDEX IF NOT EXISTS idx_revisions_fingerprint ON revisions(fingerprint);
 
 """
     + SERIES_PATCHES_DDL
+    + ';'
+    + LANDED_PATCHES_DDL
     + ';'
 )
 
@@ -200,6 +211,8 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
             conn.execute(
                 'ALTER TABLE revisions ADD COLUMN is_rethreaded INTEGER DEFAULT 0'
             )
+    if version < 11:
+        conn.execute(LANDED_PATCHES_DDL)
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -1446,6 +1459,39 @@ def get_series_patches(
         (change_id, revision),
     )
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+def set_landed_patches(
+    conn: sqlite3.Connection, landed: Dict[str, Optional[str]]
+) -> None:
+    """Record which posted patches have landed, by message-id.
+
+    A commit records the patch as landed; None forgets it, because a patch
+    dropped from a remote (e.g. a linux-next rebuild) is no longer landed.
+    """
+    conn.executemany(
+        'INSERT INTO landed_patches (message_id, landed_commit) VALUES (?, ?)'
+        ' ON CONFLICT(message_id) DO UPDATE SET landed_commit = excluded.landed_commit',
+        [(msgid, commit) for msgid, commit in landed.items() if commit],
+    )
+    conn.executemany(
+        'DELETE FROM landed_patches WHERE message_id = ?',
+        [(msgid,) for msgid, commit in landed.items() if not commit],
+    )
+    conn.commit()
+
+
+def get_landed_patches(
+    conn: sqlite3.Connection, change_id: str, revision: int
+) -> Dict[int, str]:
+    """Return {position: commit} for the landed patches of a series revision."""
+    cursor = conn.execute(
+        'SELECT sp.position, lp.landed_commit FROM series_patches sp'
+        ' JOIN landed_patches lp ON lp.message_id = sp.message_id'
+        ' WHERE sp.change_id = ? AND sp.revision = ? AND sp.position > 0',
+        (change_id, revision),
+    )
+    return {int(row[0]): str(row[1]) for row in cursor.fetchall()}
 
 
 def build_known_revisions(

@@ -72,7 +72,10 @@ class LandedIndex:
         remotes: List[str],
         posted_since: datetime.datetime,
     ) -> 'LandedIndex':
-        """Read the remotes' commits once, from shortly before *posted_since*."""
+        """Read the remotes' commits once, from shortly before *posted_since*.
+
+        Raises RuntimeError when git cannot read them.
+        """
         by_msgid: Dict[str, str] = {}
         by_subject: Dict[str, List[str]] = {}
         if not remotes:
@@ -89,8 +92,9 @@ class LandedIndex:
         gitargs.append('--')
         ecode, out = b4.git_run_command(gitdir, gitargs)
         if ecode > 0:
-            logger.warning('Could not read commits from %s', ', '.join(remotes))
-            return cls(gitdir, by_msgid, by_subject)
+            # Raised rather than returning an empty index, which would make
+            # every landed patch look dropped
+            raise RuntimeError(f'Could not read commits from {", ".join(remotes)}')
         for record in out.split('\x00'):
             fields = record.strip('\n').split('\x1f')
             if len(fields) != 3:

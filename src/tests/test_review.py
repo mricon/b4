@@ -12,6 +12,7 @@ from unittest import mock
 import pytest
 
 import b4
+import b4.review.landed
 import b4.review.tracking
 import liblore
 from b4 import review, review_tui
@@ -4921,6 +4922,7 @@ def test_update_all_tracking_skips_snoozed_and_archived(
         identifier: str,
         linkmask: str,
         topdir: Optional[str] = None,
+        landed_index: Optional[b4.review.landed.LandedIndex] = None,
     ) -> Dict[str, Any]:
         updated.append(one['change_id'])
         if one['change_id'] == 'd':
@@ -4975,6 +4977,7 @@ def test_update_all_tracking_counts_upstream(
         identifier: str,
         linkmask: str,
         topdir: Optional[str] = None,
+        landed_index: Optional[b4.review.landed.LandedIndex] = None,
     ) -> Dict[str, Any]:
         for source in fetches[one['change_id']]:
             node.last_source = source
