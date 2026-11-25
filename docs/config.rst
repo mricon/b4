@@ -979,6 +979,11 @@ These settings control ``b4 review`` TUI behaviour.
      ``misc/agent-reviewer.md`` in the b4 source tree and can be adapted
      to your project's review guidelines.
 
+     A relative path is taken from the top of the work tree, except that
+     a path starting with ``.git/`` is taken from the common git
+     directory (``git rev-parse --git-common-dir``). This way the same
+     setting also works from linked worktrees, where ``.git`` is a file.
+
      Default: ``None``
 
      .. versionadded:: v0.15

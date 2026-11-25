@@ -42,6 +42,7 @@ from b4.review._review import (
     _sync_reply_trailers,
     _toggle_patch_done,
     _trim_quoted_reply,
+    resolve_agent_prompt_path,
     retrieve_series_messages,
 )
 
@@ -84,6 +85,7 @@ __all__ = [
     '_selected_trailer_names',
     '_apply_followup_inline_comments',
     '_integrate_agent_reviews',
+    'resolve_agent_prompt_path',
     '_extract_comments_from_quoted_reply',
     '_integrate_sashiko_reviews',
     '_integrate_followup_inline_comments',

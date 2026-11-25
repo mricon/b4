@@ -2272,7 +2272,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         sp.whitespace_split = True
         cmdargs = list(sp)
 
-        prompt_path = os.path.join(self._topdir, agent_prompt)
+        prompt_path = b4.review.resolve_agent_prompt_path(self._topdir, agent_prompt)
         if not os.path.isfile(prompt_path):
             self.notify(
                 f'Agent prompt file not found: {agent_prompt}', severity='error'

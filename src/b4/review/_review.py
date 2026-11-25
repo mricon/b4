@@ -1444,6 +1444,24 @@ def _clear_other_comments(
     return cleared
 
 
+def resolve_agent_prompt_path(topdir: str, prompt_path: str) -> str:
+    """Return where b4.review-agent-prompt-path points for *topdir*.
+
+    A relative path whose first component is ``.git`` is resolved against
+    the common git dir, so the same repository config works from linked
+    worktrees, where ``.git`` is a file.  Other relative paths are taken
+    from the top of the work tree.
+    """
+    if os.path.isabs(prompt_path):
+        return prompt_path
+    parts = os.path.normpath(prompt_path).split(os.sep, 1)
+    if parts[0] == '.git' and len(parts) == 2:
+        common_dir = b4.git_get_common_dir(topdir)
+        if common_dir:
+            return os.path.join(common_dir, parts[1])
+    return os.path.join(topdir, prompt_path)
+
+
 def _integrate_agent_reviews(
     topdir: str,
     cover_text: str,

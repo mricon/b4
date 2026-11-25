@@ -1895,6 +1895,8 @@ Patchwork integration reuses the standard patchwork settings
 (:term:`b4.pw-url`, :term:`b4.pw-project`, and :term:`b4.pw-key` or
 :term:`b4.pw-user`). See :ref:`patchwork_settings` for details.
 
+.. _review_agent_config:
+
 Configuring the review agent
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The ``a`` keybinding in the review interface invokes an external command
@@ -1938,6 +1940,24 @@ To use GitHub Copilot CLI::
    CLI are best-effort suggestions. If you get another tool working
    (or find corrections for the above), please send your findings to
    tools@kernel.org.
+
+If you run ``b4 review`` from a linked worktree (``git worktree add``),
+``.git`` in the worktree is a file, not a directory. b4 still finds a
+prompt path that starts with ``.git/``, and it reads the agent's review
+files from the common git directory. Your agent's sandbox settings are
+passed to the agent as they are, though, so you need to adjust them:
+
+- Rules such as ``--add-dir .git`` and ``Edit(.git/b4-review/**)`` do
+  not cover the directory the agent must write to. Use the absolute
+  path that ``git rev-parse --path-format=absolute --git-common-dir``
+  prints instead of ``.git`` in those rules.
+- A sandbox that only allows writes inside the working directory, such
+  as ``codex --sandbox workspace-write``, blocks the common git
+  directory, because it is outside the worktree. Allow it explicitly,
+  for example with ``--add-dir`` and the same absolute path.
+
+The repository config is shared by all worktrees, and an absolute path
+there works in the main checkout and in every worktree.
 
 The command is run from the repository top-level directory. The prompt
 file should contain instructions telling the agent how to review patches

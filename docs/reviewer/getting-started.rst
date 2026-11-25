@@ -287,6 +287,10 @@ project's review guidelines.
 See :ref:`review_settings` for the full list of supported agents
 (Claude Code, Gemini CLI, OpenAI Codex CLI, GitHub Copilot CLI).
 
+If you review from a linked worktree (``git worktree add``), the
+``.git`` paths in the agent command need adjusting. See
+:ref:`review_agent_config` for details.
+
 Running the agent
 ~~~~~~~~~~~~~~~~~~
 In the review interface, press ``a`` to invoke the agent on the

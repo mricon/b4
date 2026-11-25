@@ -3487,7 +3487,7 @@ class TestResolveMessagePositions:
 
 
 class TestAgentReviewGitDir:
-    """The agent's review files live in the common git dir.
+    """The agent's prompt and review files live in the common git dir.
 
     In a linked worktree ``.git`` is a file, so any path built as
     ``<topdir>/.git/...`` points nowhere.  Both checkout layouts must find
@@ -3518,6 +3518,28 @@ class TestAgentReviewGitDir:
         )
         note = tracking['series']['reviews']['agent@example.com']['note']
         assert note == 'Looks fine.'
+
+    @pytest.mark.parametrize(
+        ('prompt', 'expected'),
+        [
+            # The documented default must work from a worktree too.
+            pytest.param(
+                '.git/agent-reviewer.md', '{common}/agent-reviewer.md', id='dotgit'
+            ),
+            pytest.param('misc/agent.md', '{top}/misc/agent.md', id='tree-relative'),
+            pytest.param('/etc/agent.md', '/etc/agent.md', id='absolute'),
+        ],
+    )
+    @pytest.mark.parametrize(
+        'use_worktree', [False, True], ids=['main_repo', 'worktree']
+    )
+    def test_resolve_prompt_path(
+        self, gitdir: str, use_worktree: bool, prompt: str, expected: str
+    ) -> None:
+        topdir = add_worktree(gitdir) if use_worktree else gitdir
+        want = expected.format(common=os.path.join(gitdir, '.git'), top=topdir)
+        got = review.resolve_agent_prompt_path(topdir, prompt)
+        assert os.path.normpath(got) == os.path.normpath(want)
 
 
 class TestIntegrateSashikoReviews:
