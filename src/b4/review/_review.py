@@ -85,6 +85,15 @@ def make_review_magic_json(data: Dict[str, Any]) -> str:
         f'{REVIEW_MAGIC_MARKER}\n'
         '# This section is used internally by b4 review for tracking purposes.\n'
     )
+    # What landed is read from the database on load (_load_landed_marks):
+    # it depends on this machine's remotes, and this text travels
+    patches = data.get('patches')
+    if isinstance(patches, list) and any('landed' in patch for patch in patches):
+        data = dict(data)
+        data['patches'] = [
+            {key: value for key, value in patch.items() if key != 'landed'}
+            for patch in patches
+        ]
     return mj + json.dumps(data, indent=2)
 
 
@@ -580,6 +589,10 @@ def get_review_branch_patch_ids(
 def load_tracking(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
     """Load and parse the tracking commit at the tip of a review branch.
 
+    Each patch that has landed on a remote listed in b4.review-check-landed
+    also gets a 'landed' key with the commit it landed as. That key is
+    never saved with the tracking commit.
+
     Returns (cover_text, tracking_dict).
     """
     ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch, '--'])
@@ -606,6 +619,7 @@ def load_tracking(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
         json_clean.append(line)
     tracking = json.loads('\n'.join(json_clean))
     _adopt_older_sends(tracking)
+    _load_landed_marks(tracking)
     return cover_text, tracking
 
 
@@ -614,6 +628,8 @@ def get_review_info(topdir: str, branch: str) -> Dict[str, Union[str, int, bool,
 
     Returns key-value pairs describing the branch, its series metadata, and
     dynamic ``commit-{short}`` entries for each patch commit.
+    ``landed-patches`` holds the numbers of the patches that have landed on
+    a remote listed in b4.review-check-landed, separated by spaces.
     """
     _cover_text, tracking = load_tracking(topdir, branch)
     series = tracking['series']
@@ -646,6 +662,14 @@ def get_review_info(topdir: str, branch: str) -> Dict[str, Union[str, int, bool,
         'num-prereqs': len(prereqs),
         'complete': series.get('complete'),
         'target-branch': target_branch,
+        # The only way for scripts and review agents to learn this: the
+        # tracking commit they read never says what landed
+        'landed-patches': ' '.join(
+            str(position)
+            for position, patch in enumerate(tracking.get('patches', []), start=1)
+            if patch.get('landed')
+        )
+        or None,
     }
 
     # Enumerate patch commits
@@ -1042,16 +1066,26 @@ def _has_my_approval_in_thread(target: Dict[str, Any], my_email: str) -> bool:
     return found_approval
 
 
+#: Patch states that take a patch out of review: hidden with H, left out
+#: of a take's preselection.
+SKIPPED_PATCH_STATES: Tuple[str, ...] = ('skip', 'landed')
+
+
 def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     """Derive the effective per-patch state for the current user.
 
-    Returns 'done', 'draft', 'external', 'skip', 'unchanged', or '' (no state).
+    Returns 'done', 'draft', 'external', 'landed', 'skip', 'unchanged', or ''
+    (no state).
     'done', 'skip', and 'unchanged' are stored explicitly; other states are derived.
     'unchanged' is low-priority: any derived state (draft, done, external) takes
     precedence over it, so it is only returned when the maintainer has added nothing.
     The 'external' state indicates that external reviewers (agents,
     sashiko, follow-ups) have inline comments but the maintainer has
     not yet commented.
+    The 'landed' state means the patch is already in a tree listed in
+    b4.review-check-landed. It is treated like 'skip', so it only applies
+    when the maintainer has not acted on the patch: it must never hide
+    their own work, and nobody needs to review a landed patch further.
     """
     review = _get_my_review(target, usercfg)
     explicit = str(review.get('patch-state', ''))
@@ -1082,6 +1116,8 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     # re-sent.
     if my_email and _has_my_approval_in_thread(target, my_email):
         return 'done'
+    if target.get('landed'):
+        return 'landed'
     # Check for external reviewer comments
     all_reviews = target.get('reviews', {})
     if any(
@@ -2967,6 +3003,34 @@ def update_series_tracking(
             logger.warning('Could not update message counts: %s', ex)
 
     return result
+
+
+def _load_landed_marks(tracking: Dict[str, Any]) -> None:
+    """Mark each patch in the tracking data with the commit it landed as.
+
+    The database is the only place that knows what landed, so the marks
+    replace whatever the tracking data came with.
+    """
+    series = tracking.get('series', {})
+    identifier = series.get('identifier')
+    change_id = series.get('change-id')
+    landed: Dict[int, str] = {}
+    if identifier and change_id:
+        try:
+            conn = b4.review.tracking.get_db(identifier)
+            try:
+                landed = b4.review.tracking.get_landed_patches(
+                    conn, change_id, int(series.get('revision', 1))
+                )
+            finally:
+                conn.close()
+        except Exception as ex:
+            logger.debug('Could not read landed patches: %s', ex)
+    for position, patch in enumerate(tracking.get('patches', []), start=1):
+        if position in landed:
+            patch['landed'] = landed[position]
+        else:
+            patch.pop('landed', None)
 
 
 def _get_update_lock_path(identifier: str) -> str:

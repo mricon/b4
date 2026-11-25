@@ -845,11 +845,13 @@ class TestSkippedReplies:
             assert reply in '\n'.join(line.text for line in viewer.lines)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize('how', ['skip', 'landed'])
     async def test_hiding_skipped_keeps_unsent_replies_visible(
-        self, gitdir: str
+        self, gitdir: str, how: str
     ) -> None:
         """A hidden patch must not carry mail out unseen: H only hides
-        skipped patches that have nothing left to send."""
+        skipped patches that have nothing left to send. Patches that landed
+        elsewhere are hidden along with skipped ones."""
         branch, _shas = _create_review_branch_with_patches(
             gitdir, 'skipped-hide', ['patch 1', 'patch 2']
         )
@@ -858,7 +860,10 @@ class TestSkippedReplies:
         session['patches'][0]['reviews'] = {
             my_email: {'patch-state': 'skip', 'reply': 'Not taking this.'}
         }
-        session['patches'][1]['reviews'] = {my_email: {'patch-state': 'skip'}}
+        if how == 'landed':
+            session['patches'][1]['landed'] = 'abc123'
+        else:
+            session['patches'][1]['reviews'] = {my_email: {'patch-state': 'skip'}}
         app = ReviewApp(session)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()

@@ -2856,7 +2856,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 usercfg = b4.get_user_config()
                 patches = tracking.get('patches', [])
                 if any(
-                    b4.review._get_patch_state(p, usercfg) == 'skip' for p in patches
+                    b4.review._get_patch_state(p, usercfg)
+                    in b4.review.SKIPPED_PATCH_STATES
+                    for p in patches
                 ):
                     default_method = 'cherry-pick'
             except Exception:
@@ -2947,7 +2949,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             preselected = [
                 i + 1
                 for i, p in enumerate(patches)
-                if b4.review._get_patch_state(p, usercfg) != 'skip'
+                if b4.review._get_patch_state(p, usercfg)
+                not in b4.review.SKIPPED_PATCH_STATES
             ]
             has_skips = len(preselected) != len(patches)
             # Merge with nothing skipped takes the whole series, no picker.

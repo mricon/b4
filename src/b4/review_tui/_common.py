@@ -193,6 +193,7 @@ PATCH_STATE_MARKERS: Dict[str, str] = {
     'draft': '\u270e',  # ✎ pencil        (= maintainer reviewing)
     'done': '\u2713',  # ✓ check         (= done)
     'skip': '\u2715',  # ✕ cross         (= skipped)
+    'landed': '\u2193',  # ↓ down arrow   (= landed in a checked tree)
     'unchanged': '\u2261',  # ≡ identical-to  (= patch unchanged from prior revision)
 }
 

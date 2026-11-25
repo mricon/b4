@@ -94,7 +94,7 @@ class PatchListItem(ListItem):
         self._apply_state_style()
 
     def _apply_state_style(self) -> None:
-        if self._state in ('skip', 'unchanged'):
+        if self._state in (*b4.review.SKIPPED_PATCH_STATES, 'unchanged'):
             self._label.styles.text_style = 'dim'
         elif self._state == 'done':
             self._label.styles.text_style = 'bold'
@@ -454,12 +454,14 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     def _is_hidden(self, target: Dict[str, Any]) -> bool:
         """Return True if hiding skipped patches takes *target* off the list.
 
-        A skipped patch still sends its reply, so one with anything left
-        to send stays visible: hidden rows must not carry mail out unseen.
+        Patches that landed elsewhere are hidden along with skipped ones. A
+        skipped patch still sends its reply, so one with anything left to
+        send stays visible: hidden rows must not carry mail out unseen.
         """
         return (
             self._hide_skipped
-            and b4.review._get_patch_state(target, self._usercfg) == 'skip'
+            and b4.review._get_patch_state(target, self._usercfg)
+            in b4.review.SKIPPED_PATCH_STATES
             and not b4.review._has_unsent(
                 b4.review._get_my_review(target, self._usercfg)
             )

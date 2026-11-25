@@ -2761,7 +2761,7 @@ class TestMergeTakeSkipRouting:
     """
 
     def _setup_branch(
-        self, gitdir: str, change_id: str, skip_indices: List[int]
+        self, gitdir: str, change_id: str, skip_indices: List[int], how: str = 'skip'
     ) -> str:
         branch = create_review_branch(gitdir, change_id, status='reviewing')
         cover_text, trk = b4.review.load_tracking(gitdir, branch)
@@ -2769,11 +2769,23 @@ class TestMergeTakeSkipRouting:
         patches: List[Dict[str, Any]] = []
         for i in range(1, 4):
             p: Dict[str, Any] = {'subject': f'patch {i}', 'message-id': f'p{i}@ex.com'}
-            if i in skip_indices:
+            if i in skip_indices and how == 'skip':
                 b4.review._set_patch_state(p, usercfg, 'skip')
             patches.append(p)
         trk['patches'] = patches
         b4.review.save_tracking_ref(gitdir, branch, cover_text, trk)
+        if how == 'landed':
+            # What landed is only ever read from the database
+            conn = tracking.init_db(trk['series']['identifier'])
+            conn.executemany(
+                'INSERT INTO series_patches (change_id, revision, position, message_id)'
+                ' VALUES (?, 1, ?, ?)',
+                [(change_id, i, f'p{i}@ex.com') for i in range(1, 4)],
+            )
+            tracking.set_landed_patches(
+                conn, {f'p{i}@ex.com': 'abc123' for i in skip_indices}
+            )
+            conn.close()
         return branch
 
     def _route(
@@ -2797,9 +2809,14 @@ class TestMergeTakeSkipRouting:
         )
         return pushed, confirmed
 
-    def test_merge_with_skips_opens_picker(self, gitdir: str) -> None:
-        """Merge + skipped patches → picker with skipped pre-deselected."""
-        branch = self._setup_branch(gitdir, 'merge-skip-1', skip_indices=[2])
+    @pytest.mark.parametrize('how', ['skip', 'landed'])
+    def test_merge_with_skips_opens_picker(self, gitdir: str, how: str) -> None:
+        """Merge + skipped patches → picker with skipped pre-deselected.
+
+        A patch that already landed elsewhere is left out the same way:
+        taking it again would duplicate it.
+        """
+        branch = self._setup_branch(gitdir, 'merge-skip-1', skip_indices=[2], how=how)
         pushed, confirmed = self._route(gitdir, branch, 'merge')
         assert len(pushed) == 1, 'expected the patch picker to be pushed'
         assert isinstance(pushed[0], CherryPickScreen)

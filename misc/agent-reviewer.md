@@ -119,6 +119,23 @@ cover letter) for a `reviews` sub-dict whose entries contain
 produce a review file for them and do not include them in your
 series-level commentary.
 
+### Landed patches
+
+Some patches may already be in a tree the maintainer follows — for
+example, because another maintainer took them. The tracking commit does
+not say which ones. To find out, run:
+
+```shell
+b4 review show-info <branch>:landed-patches
+```
+
+This prints the numbers of the landed patches, separated by spaces
+(patch 1 is `patches[0]`), or `None` when no patch has landed. If the
+command fails, assume that no patch has landed. **Treat landed patches
+like skipped ones:** do not produce a review file for them and do not
+include them in your series-level commentary. The rest of the series
+may still depend on them, so you may read their diffs for context.
+
 ## Thread discussion context (optional)
 
 The `series` dict may contain a `thread-context-blob` key.  If present, it

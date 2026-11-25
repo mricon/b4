@@ -22,6 +22,7 @@ from b4.review import tracking as review_tracking
 
 from .helpers.mail import AUTHOR, series_msgs
 from .helpers.patches import ALGO_NEW, ALGO_OLD, commit_file, post_patch
+from .helpers.tracking import create_review_branch, make_tracking_data
 
 NOW = datetime.datetime.now(tz=datetime.timezone.utc)
 
@@ -317,6 +318,51 @@ def test_update_without_an_index_keeps_what_is_known() -> None:
     assert _landed('unknown') == {1: 'abc'}
 
 
+def _review_branch(gitdir: str, change_id: str, checkout: bool = False) -> str:
+    """Create the two-patch review branch of a series made by _track()."""
+    tracking = make_tracking_data(
+        change_id,
+        identifier=IDENT,
+        expected=2,
+        patches=[
+            {
+                'title': f'part {i}',
+                'header-info': {'msgid': f'{change_id}-v1-p{i}@example.com'},
+            }
+            for i in (1, 2)
+        ],
+    )
+    return create_review_branch(
+        gitdir, change_id, tracking_data=tracking, checkout=checkout
+    )
+
+
+@pytest.mark.parametrize('checked_out', [False, True])
+def test_review_branch_shows_what_an_update_found(
+    gitdir: str, checked_out: bool
+) -> None:
+    """Whoever loads a review branch sees the landed patches right away.
+
+    That includes a branch that was checked out during the update: updates
+    leave such a branch alone, and the maintainer is most likely to look
+    at exactly that one next.
+    """
+    change_id = 'branch'
+    msgs = _track(change_id)
+    branch = _review_branch(gitdir, change_id, checkout=checked_out)
+
+    result = _update(change_id, msgs, _index(f'{change_id}-v1-p2@example.com'), gitdir)
+
+    assert result.get('error') is None
+    _cover, loaded = b4.review.load_tracking(gitdir, branch)
+    assert 'landed' not in loaded['patches'][0]
+    assert loaded['patches'][1]['landed'] == f'c-{change_id}-v1-p2@example.com'
+
+    _update(change_id, msgs, _index(), gitdir)
+    _cover, loaded = b4.review.load_tracking(gitdir, branch)
+    assert all('landed' not in p for p in loaded['patches'])
+
+
 def _sweep(
     monkeypatch: pytest.MonkeyPatch,
     topdir: Optional[str],
@@ -382,3 +428,57 @@ def test_sweep_that_cannot_read_remotes_changes_nothing(
     seen = _sweep(monkeypatch, topdir, build, remotes=['upstream'])
 
     assert seen == [None, None, None]
+
+
+# ---------------------------------------------------------------------------
+# The landed patch state
+# ---------------------------------------------------------------------------
+
+ME = 'me@example.com'
+
+
+@pytest.mark.parametrize(
+    'review, others, expected',
+    [
+        ({}, {}, 'landed'),
+        ({'patch-state': 'unchanged'}, {}, 'landed'),
+        ({}, {'agent@example.com': {'comments': [{'line': 1}]}}, 'landed'),
+        ({'patch-state': 'skip'}, {}, 'skip'),
+        ({'patch-state': 'done'}, {}, 'done'),
+        ({'reply': 'Applied elsewhere, but one more thing...'}, {}, 'draft'),
+    ],
+    ids=['plain', 'unchanged', 'external', 'skip', 'done', 'my-reply'],
+)
+def test_landed_state_yields_to_anything_the_maintainer_did(
+    review: Dict[str, Any], others: Dict[str, Any], expected: str
+) -> None:
+    """Landed hides a patch like skip, so it must never hide the maintainer's work.
+
+    Anything the maintainer did to the patch (a state, a reply) wins;
+    landed only replaces states nobody acted on.
+    """
+    reviews: Dict[str, Any] = dict(others)
+    if review:
+        reviews[ME] = review
+    patch = {'landed': 'abc123', 'reviews': reviews}
+
+    assert b4.review._get_patch_state(patch, {'email': ME}) == expected
+
+
+def test_show_info_names_the_landed_patches(gitdir: str) -> None:
+    """Scripts and review agents cannot read the database, so show-info tells them.
+
+    The tracking commit they read says nothing about landed patches.
+    """
+    change_id = 'info'
+    _track(change_id)
+    branch = _review_branch(gitdir, change_id)
+    assert b4.review.get_review_info(gitdir, branch)['landed-patches'] is None
+
+    conn = review_tracking.get_db(IDENT)
+    review_tracking.set_landed_patches(
+        conn, {f'{change_id}-v1-p{i}@example.com': f'c{i}' for i in (1, 2)}
+    )
+    conn.close()
+
+    assert b4.review.get_review_info(gitdir, branch)['landed-patches'] == '1 2'
