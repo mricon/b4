@@ -32,6 +32,14 @@ Optional flags
 ``-c, --check``
   Check if the specified pull request has already been applied.
 
+``--thanks-record, --no-thanks-record``
+  Controls whether b4 records retrieved pull requests for future
+  ``b4 ty`` thank-you generation. Overrides the :term:`b4.thanks-record`
+  configuration setting. Does not affect :term:`b4.pw-review-state`
+  updates.
+
+  .. versionadded:: v0.17
+
 Exploding pull requests
 -----------------------
 Pull requests are useful, but if the maintainer needs to do more than

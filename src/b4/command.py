@@ -167,6 +167,12 @@ def cmd_am_common_opts(sp: argparse.ArgumentParser) -> None:
         default=False,
         help='Allow unicode control characters (very rarely legitimate)',
     )
+    sp.add_argument(
+        '--thanks-record',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='Record (or do not record) this series for future "thanks" generation',
+    )
     sa_g = sp.add_mutually_exclusive_group()
     sa_g.add_argument(
         '-l',
@@ -796,6 +802,12 @@ def setup_parser() -> argparse.ArgumentParser:
         action='store_true',
         default=False,
         help='Force a --dry-run on git-send-email invocation (use with -s)',
+    )
+    sp_pr.add_argument(
+        '--thanks-record',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='Record (or do not record) this pull request for future "thanks" generation',
     )
     sp_pr.add_argument(
         'msgid', nargs='?', help='Message ID to process, or pipe a raw message'

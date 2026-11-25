@@ -1,3 +1,4 @@
+import argparse
 import copy
 import email
 import email.message
@@ -22,6 +23,7 @@ import dns.rrset
 import pytest
 
 import b4
+import b4.command
 
 from .helpers.mail import make_msg
 
@@ -3471,3 +3473,96 @@ class TestGetPwKey:
         assert b4.MAIN_CONFIG.get('prep-pre-flight-checks') == 'disable-all'
         # The developer's own git config may set pw-user
         assert b4.MAIN_CONFIG.get('pw-user') != 'stolen'
+
+
+class TestGetThanksRecord:
+    """b4.get_thanks_record(): the CLI flag wins over b4.thanks-record."""
+
+    def test_default_is_true(self) -> None:
+        """Without the flag or the option, behave as b4 always did."""
+        assert b4.get_thanks_record(argparse.Namespace(thanks_record=None)) is True
+
+    @pytest.mark.parametrize(
+        'cfg_val,flag,expected',
+        [
+            pytest.param('yes', None, True, id='config-yes'),
+            pytest.param('no', None, False, id='config-no'),
+            pytest.param('yes', '--no-thanks-record', False, id='cli-no'),
+            pytest.param('no', '--thanks-record', True, id='cli-yes'),
+            # An explicit flag must not trip over a broken config value
+            pytest.param('bogus', '--no-thanks-record', False, id='cli-no-bogus'),
+            pytest.param('bogus', '--thanks-record', True, id='cli-yes-bogus'),
+        ],
+    )
+    def test_cli_and_config(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        cfg_val: str,
+        flag: Optional[str],
+        expected: bool,
+    ) -> None:
+        b4.MAIN_CONFIG['thanks-record'] = cfg_val
+        argv = ['--no-stdin', 'am', 'msg@example.com']
+        if flag:
+            argv.insert(2, flag)
+        cmdargs = b4.command.setup_parser().parse_args(argv)
+        with caplog.at_level(logging.WARNING, logger='b4'):
+            assert b4.get_thanks_record(cmdargs) is expected
+        assert 'thanks-record' not in caplog.text
+
+    @pytest.mark.parametrize(
+        'badval',
+        [
+            pytest.param('maybe', id='unrecognized'),
+            pytest.param('', id='empty'),
+            pytest.param(None, id='none'),
+            pytest.param(['yes'], id='list'),
+        ],
+    )
+    def test_invalid_config_warns_and_defaults_true(
+        self, caplog: pytest.LogCaptureFixture, badval: Any
+    ) -> None:
+        b4.MAIN_CONFIG['thanks-record'] = badval
+        with caplog.at_level(logging.WARNING, logger='b4'):
+            res = b4.get_thanks_record(argparse.Namespace(thanks_record=None))
+        assert res is True
+        assert 'invalid b4.thanks-record value' in caplog.text
+
+    def test_ignored_in_worktree_config(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cloned tree's .b4-config must not turn off the maintainer's records."""
+        monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+        monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+        wtcfg = pathlib.Path(gitdir) / '.b4-config'
+        wtcfg.write_text(
+            '[b4]\n\tthanks-record = no\n\tprep-pre-flight-checks = disable-all\n'
+        )
+        b4._setup_main_config(topdir=gitdir)
+        assert b4.MAIN_CONFIG.get('prep-pre-flight-checks') == 'disable-all'
+        assert b4.MAIN_CONFIG.get('thanks-record') == 'yes'
+
+
+@pytest.mark.parametrize(
+    'state,msgids,called',
+    [
+        pytest.param('under-review', ['a@example.com'], True, id='set'),
+        pytest.param(None, ['a@example.com'], False, id='state-unset'),
+        pytest.param('', ['a@example.com'], False, id='state-empty'),
+        pytest.param('under-review', [], False, id='no-msgids'),
+    ],
+)
+def test_patchwork_set_review_state(
+    monkeypatch: pytest.MonkeyPatch,
+    state: Optional[str],
+    msgids: List[str],
+    called: bool,
+) -> None:
+    """Only talk to Patchwork when there is a state and something to move."""
+    b4.MAIN_CONFIG['pw-review-state'] = state
+    calls: List[Tuple[List[str], str]] = []
+    monkeypatch.setattr(
+        b4, 'patchwork_set_state', lambda ids, st: calls.append((ids, st))
+    )
+    b4.patchwork_set_review_state(msgids)
+    assert calls == ([(msgids, state)] if called else [])

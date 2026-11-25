@@ -1960,7 +1960,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                             topdir, branch_name, 'reviewing'
                         )
                     if status == 'thanked':
-                        review_state = b4.review.pw_config_state('pw-review-state')
+                        review_state = b4.pw_config_state('pw-review-state')
                         if review_state:
                             self._fetch_pw_key()
                             b4.review.pw_update_tracked_series(
@@ -2443,7 +2443,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 pass
 
         # Update Patchwork state, as b4 am/shazam do with pw-review-state
-        review_state = b4.review.pw_config_state('pw-review-state')
+        review_state = b4.pw_config_state('pw-review-state')
         if review_state and self._identifier:
             self._fetch_pw_key()
             b4.review.pw_update_tracked_series(
@@ -3556,7 +3556,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     pass
 
         # Update Patchwork state, as b4 ty does with pw-accept-state
-        accept_state = b4.review.pw_config_state('pw-accept-state')
+        accept_state = b4.pw_config_state('pw-accept-state')
         if new_status == 'accepted' and accept_state and self._identifier:
             b4.review.pw_update_tracked_series(
                 self._identifier, change_id, series.get('revision'), accept_state
@@ -5525,7 +5525,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             change_id,
             revision,
             review_branch,
-            pw_state=b4.review.pw_config_state('pw-accept-state'),
+            pw_state=b4.pw_config_state('pw-accept-state'),
         ):
             self._selected_series = None
             panel = self.query_one('#details-panel', Vertical)

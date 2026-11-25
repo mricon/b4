@@ -4598,17 +4598,6 @@ def pw_fetch_checks(
     return all_checks
 
 
-def pw_config_state(key: str) -> Optional[str]:
-    """Return the Patchwork state named by config *key*, or None if unset.
-
-    *key* is one of ``pw-accept-state`` or ``pw-review-state``. As with
-    ``b4 ty`` and ``b4 am``, an unset key means b4 leaves the Patchwork
-    state alone.
-    """
-    state = b4.get_main_config().get(key)
-    return state if isinstance(state, str) and state else None
-
-
 def pw_set_series_state(
     pwkey: str,
     pwurl: str,

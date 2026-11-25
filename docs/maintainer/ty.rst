@@ -22,6 +22,10 @@ directory:
 All of these files contain JSON data about the series or pull requests
 being tracked.
 
+If you do not want ``b4 am``, ``b4 shazam``, or ``b4 pr`` to record
+tracking files, pass ``--no-thanks-record`` on the command line or set
+:term:`b4.thanks-record` to ``no`` in your configuration.
+
 Using the Auto-Thankanator
 --------------------------
 If you've retrieved and applied some patches to your tree, you should be

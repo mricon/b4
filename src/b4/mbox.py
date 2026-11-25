@@ -212,6 +212,7 @@ def get_merge_base(
 
 def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -> None:
     config = b4.get_main_config()
+    thanks_record = b4.get_thanks_record(cmdargs)
     outdir = cmdargs.outdir
     if outdir == '-':
         cmdargs.nocover = True
@@ -529,7 +530,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             )
             logger.info(out.strip())
             if ecode == 0:
-                thanks_record_am(lser, cherrypick=cherrypick)
+                _record_am_state(lser, cherrypick, thanks_record)
             sys.exit(ecode)
 
         base_commit = get_merge_base(topdir, first_body, lser, cmdargs)
@@ -628,7 +629,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         except RuntimeError:
             sys.exit(1)
 
-        thanks_record_am(lser, cherrypick=cherrypick)
+        _record_am_state(lser, cherrypick, thanks_record)
         _run_shazam_merge(
             topdir,
             merge_template=merge_template,
@@ -652,55 +653,63 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             '       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename
         )
 
-    thanks_record_am(lser, cherrypick=cherrypick)
+    _record_am_state(lser, cherrypick, thanks_record)
 
 
-def thanks_record_am(lser: b4.LoreSeries, cherrypick: Optional[List[int]]) -> None:
-    # Are we tracking this already?
+def _record_am_state(
+    lser: b4.LoreSeries, cherrypick: Optional[List[int]], thanks_record: bool
+) -> None:
+    applied = _applied_patches(lser, cherrypick)
+    if thanks_record:
+        thanks_record_am(lser, applied, cherrypick=cherrypick)
+    b4.patchwork_set_review_state([pmsg.msgid for pmsg in applied])
+
+
+def _applied_patches(
+    lser: b4.LoreSeries, cherrypick: Optional[List[int]]
+) -> List[b4.LoreMessage]:
+    """Return the patches that am/shazam applied, in series order.
+
+    The thanks record and the Patchwork update both use this list, so
+    they always cover the same patches. Slot 0 is the cover letter, which
+    get_am_ready() never applies, even when its body contains a diff.
+    """
+    applied = list()
+    for at, pmsg in enumerate(lser.patches[1:], 1):
+        if pmsg is None or not pmsg.has_diff:
+            continue
+        if cherrypick is not None and at not in cherrypick:
+            logger.debug('Skipped non-cherrypicked: %s', at)
+            continue
+        applied.append(pmsg)
+    return applied
+
+
+def thanks_record_am(
+    lser: b4.LoreSeries,
+    applied: List[b4.LoreMessage],
+    cherrypick: Optional[List[int]],
+) -> None:
     datadir = b4.get_data_dir()
     slug = lser.get_slug(extended=True)
     filename = '%s.am' % slug
 
+    # The headers come from the cover letter when there is one
+    lmsg = next((pmsg for pmsg in lser.patches if pmsg is not None), None)
+    if lmsg is None:
+        logger.debug('All patches missing, not tracking for thanks')
+        return
+
     patches = list()
-    msgids = list()
-    at = 0
     padlen = len(str(lser.expected))
-    lmsg = None
-
-    for pmsg in lser.patches:
-        if pmsg is None:
-            at += 1
-            continue
-
-        if lmsg is None:
-            lmsg = pmsg
-
-        if not pmsg.has_diff:
-            # Don't care about the cover letter
-            at += 1
-            continue
-
-        if cherrypick is not None and at not in cherrypick:
-            logger.debug('Skipped non-cherrypicked: %s', at)
-            at += 1
-            continue
-
-        # Add it for patchwork state tracking
-        msgids.append(pmsg.msgid)
-
+    for pmsg in applied:
         if pmsg.pwhash is None:
             logger.debug(
                 'Unable to get hashes for all patches, not tracking for thanks'
             )
             return
-
         prefix = '%s/%s' % (str(pmsg.counter).zfill(padlen), pmsg.expected)
         patches.append((pmsg.subject, pmsg.pwhash, pmsg.msgid, prefix))
-        at += 1
-
-    if lmsg is None:
-        logger.debug('All patches missing, not tracking for thanks')
-        return
 
     try:
         allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
@@ -731,11 +740,6 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: Optional[List[int]]) -> No
     with open(fullpath, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, ensure_ascii=False, indent=4)
         logger.debug('Wrote %s for thanks tracking', filename)
-
-    config = b4.get_main_config()
-    pwstate = str(config.get('pw-review-state', ''))
-    if pwstate:
-        b4.patchwork_set_state(msgids, pwstate)
 
 
 def save_as_quilt(am_msgs: List[EmailMessage], q_dirname: str) -> None:

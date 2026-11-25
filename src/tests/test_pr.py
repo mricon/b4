@@ -261,21 +261,6 @@ def test_thanks_record_pr_dedups(prremote: Dict[str, str]) -> None:
 # main(): the "already have it" decision (regression coverage for the bug
 # where b4 pr refused to fetch and skipped ty tracking)
 # ---------------------------------------------------------------------------
-def test_main_already_in_current_branch_records_ty(
-    prremote: Dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Point the PR tip at the current branch HEAD => genuinely already present.
-    head = b4.git_get_command_lines(None, ['rev-parse', 'HEAD'])[0]
-    msg, lmsg = _make_lmsg(prremote, tip=head)
-    _patch_main_lookups(monkeypatch, msg, lmsg)
-    cmdargs = _parse_main_args([])
-    with pytest.raises(SystemExit) as e:
-        b4.pr.main(cmdargs)
-    assert e.value.code == 1
-    # Even though we refused to fetch, ty tracking must still be recorded.
-    assert os.path.exists(os.path.join(b4.get_data_dir(), f'{head}.pr'))
-
-
 @pytest.mark.parametrize(
     'tip_is_head',
     [
@@ -284,7 +269,10 @@ def test_main_already_in_current_branch_records_ty(
     ],
 )
 def test_main_check_is_readonly(
-    prremote: Dict[str, str], monkeypatch: pytest.MonkeyPatch, tip_is_head: bool
+    prremote: Dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    pw_calls: List[Tuple[List[str], str]],
+    tip_is_head: bool,
 ) -> None:
     head = b4.git_get_command_lines(None, ['rev-parse', 'HEAD'])[0]
     tip = head if tip_is_head else None
@@ -294,10 +282,12 @@ def test_main_check_is_readonly(
     with pytest.raises(SystemExit) as e:
         b4.pr.main(cmdargs)
     assert e.value.code == 0
-    # --check is a read-only probe: it must not write a ty record.
+    # --check is a read-only probe: it must not write a ty record
+    # or move the pull request in Patchwork.
     assert not os.path.exists(
         os.path.join(b4.get_data_dir(), f'{lmsg.pr_tip_commit}.pr')
     )
+    assert pw_calls == []
 
 
 def test_main_present_only_in_unrelated_branch_still_fetches(
@@ -414,3 +404,81 @@ def test_get_pr_from_github_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(requests, 'session', lambda: sess)
     lmsg = b4.pr.get_pr_from_github('https://github.com/u/r/pull/42')
     assert lmsg is None
+
+
+# ---------------------------------------------------------------------------
+# b4.thanks-record / --thanks-record / --no-thanks-record and Patchwork state
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def pw_calls(monkeypatch: pytest.MonkeyPatch) -> List[Tuple[List[str], str]]:
+    """Turn on pw-review-state and record Patchwork updates instead of sending."""
+    b4.MAIN_CONFIG['pw-review-state'] = 'under-review'
+    calls: List[Tuple[List[str], str]] = []
+    monkeypatch.setattr(
+        b4, 'patchwork_set_state', lambda msgids, state: calls.append((msgids, state))
+    )
+    return calls
+
+
+@pytest.mark.parametrize(
+    'cfg_val,cli_flags,expect_record',
+    [
+        pytest.param('yes', [], True, id='default'),
+        pytest.param('yes', ['--no-thanks-record'], False, id='cli-no'),
+        pytest.param('no', [], False, id='config-no'),
+        pytest.param('no', ['--thanks-record'], True, id='cli-yes-overrides-no'),
+    ],
+)
+@pytest.mark.parametrize('already_present', [False, True])
+def test_main_thanks_record_and_pw_review_state(
+    prremote: Dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    pw_calls: List[Tuple[List[str], str]],
+    cfg_val: str,
+    cli_flags: List[str],
+    expect_record: bool,
+    already_present: bool,
+) -> None:
+    """The .pr record follows the knob; the Patchwork update never does.
+
+    already_present covers the early exit for a pull request that is
+    already in the tree, which records state without fetching.
+    """
+    b4.MAIN_CONFIG['thanks-record'] = cfg_val
+    tip = (
+        b4.git_get_command_lines(None, ['rev-parse', 'HEAD'])[0]
+        if already_present
+        else None
+    )
+    msg, lmsg = _make_lmsg(prremote, tip=tip)
+    _patch_main_lookups(monkeypatch, msg, lmsg)
+    cmdargs = _parse_main_args(cli_flags)
+    if already_present:
+        with pytest.raises(SystemExit) as e:
+            b4.pr.main(cmdargs)
+        assert e.value.code == 1
+    else:
+        b4.pr.main(cmdargs)
+
+    prfile = os.path.join(b4.get_data_dir(), f'{lmsg.pr_tip_commit}.pr')
+    assert os.path.exists(prfile) is expect_record
+    assert pw_calls == [([lmsg.msgid], 'under-review')]
+
+
+def test_main_explode_does_not_update_pw_or_thanks(
+    prremote: Dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    pw_calls: List[Tuple[List[str], str]],
+    tmp_path: Any,
+) -> None:
+    """Exploding only reads the pull request, even with --thanks-record."""
+    msg, lmsg = _make_lmsg(prremote)
+    _patch_main_lookups(monkeypatch, msg, lmsg)
+    outmbox = os.path.join(str(tmp_path), 'exploded.mbx')
+    cmdargs = _parse_main_args(['--explode', '--thanks-record', '-o', outmbox])
+    with pytest.raises(SystemExit) as e:
+        b4.pr.main(cmdargs)
+    assert e.value.code == 0
+    assert os.path.exists(outmbox)
+    assert pw_calls == []
+    assert [f for f in os.listdir(b4.get_data_dir()) if f.endswith('.pr')] == []

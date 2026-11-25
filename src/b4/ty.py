@@ -1390,7 +1390,7 @@ def _maybe_archive_after_send(
             identifier,
             change_id,
             revision=revision,
-            pw_state=b4.review.pw_config_state('pw-accept-state'),
+            pw_state=b4.pw_config_state('pw-accept-state'),
         )
     except Exception as ex:
         ok, detail = False, str(ex)

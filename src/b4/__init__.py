@@ -377,6 +377,8 @@ DEFAULT_CONFIG: ConfigDictT = {
     'thanks-pr-template': None,
     # See thanks-am-template.example
     'thanks-am-template': None,
+    # Do we record thanks for b4 am, shazam, and pr?
+    'thanks-record': 'yes',
     # If this is not set, we'll use what we find in
     # git-config for gpg.program, and if that's not set,
     # we'll use "gpg" and hope for the better
@@ -5244,6 +5246,24 @@ def get_main_config() -> ConfigDictT:
     return MAIN_CONFIG
 
 
+def get_thanks_record(cmdargs: argparse.Namespace) -> bool:
+    """Return whether am/shazam/pr should write a record for ``b4 ty``.
+
+    The --thanks-record/--no-thanks-record flag wins over b4.thanks-record.
+    """
+    if cmdargs.thanks_record is not None:
+        return bool(cmdargs.thanks_record)
+    cfg_val = get_main_config().get('thanks-record')
+    try:
+        return get_git_bool(str(cfg_val))
+    except ValueError:
+        logger.warning(
+            'WARNING: invalid b4.thanks-record value %r, using default (yes)',
+            cfg_val,
+        )
+        return True
+
+
 def get_data_dir(appname: str = 'b4') -> str:
     if 'XDG_DATA_HOME' in os.environ:
         datahome = os.environ['XDG_DATA_HOME']
@@ -6704,6 +6724,28 @@ def patchwork_set_state(msgids: List[str], state: str) -> None:
                     logger.info(' -> %s : %s', state, title)
             except requests.exceptions.RequestException as ex:
                 logger.debug('Patchwork REST error: %s', ex)
+
+
+def pw_config_state(key: str) -> Optional[str]:
+    """Return the Patchwork state named by config *key*, or None if unset.
+
+    *key* is one of ``pw-accept-state`` or ``pw-review-state``. As with
+    ``b4 ty`` and ``b4 am``, an unset key means b4 leaves the Patchwork
+    state alone.
+    """
+    state = get_main_config().get(key)
+    return state if isinstance(state, str) and state else None
+
+
+def patchwork_set_review_state(msgids: List[str]) -> None:
+    """Move *msgids* to b4.pw-review-state, if that is set.
+
+    This is separate from writing thanks records on purpose, so that
+    --no-thanks-record does not also stop Patchwork updates.
+    """
+    state = pw_config_state('pw-review-state')
+    if state and msgids:
+        patchwork_set_state(msgids, state)
 
 
 def prepare_mail(

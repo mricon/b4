@@ -722,6 +722,17 @@ Attestation settings
 
      Default: ``None``
 
+   :term:`b4.thanks-record`
+     Whether ``b4 am``, ``b4 shazam``, and ``b4 pr`` record information
+     about applied or fetched series and pull requests so that ``b4 ty``
+     can later generate thank-you messages for them. Can be overridden per
+     invocation with ``--thanks-record`` or ``--no-thanks-record``. Does
+     not affect :term:`b4.pw-review-state` updates.
+
+     Default: ``yes``
+
+     .. versionadded:: v0.17
+
    :term:`b4.thanks-treename`
      Name of the tree to use in the thank-you templates.
 

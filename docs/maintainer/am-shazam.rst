@@ -207,6 +207,14 @@ The following flags are common to both commands:
 
   .. versionadded:: v0.14
 
+``--thanks-record, --no-thanks-record``
+  Controls whether b4 records retrieved series for future ``b4 ty``
+  thank-you generation. Overrides the :term:`b4.thanks-record`
+  configuration setting. Does not affect :term:`b4.pw-review-state`
+  updates.
+
+  .. versionadded:: v0.17
+
 Flags only valid for ``b4 am``
 ------------------------------
 The following flags only make sense for ``b4 am``:

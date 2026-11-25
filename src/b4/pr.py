@@ -206,6 +206,7 @@ def fetch_remote(
     branch: Optional[str] = None,
     check_sig: bool = True,
     ty_track: bool = True,
+    pw_track: bool = True,
 ) -> int:
     # Do we know anything about this base commit?
     if lmsg.pr_base_commit and not b4.git_commit_exists(gitdir, lmsg.pr_base_commit):
@@ -256,6 +257,8 @@ def fetch_remote(
 
     if ty_track:
         thanks_record_pr(lmsg)
+    if pw_track:
+        b4.patchwork_set_review_state([lmsg.msgid])
 
     return 0
 
@@ -287,19 +290,13 @@ def thanks_record_pr(lmsg: b4.LoreMessage) -> None:
         json.dump(out, fh, ensure_ascii=False, indent=4)
         logger.debug('Wrote %s for thanks tracking', filename)
 
-    config = b4.get_main_config()
-    pwstate = config.get('pw-review-state', '')
-    assert isinstance(pwstate, str), 'pw-review-state must be a string'
-    if pwstate:
-        b4.patchwork_set_state([lmsg.msgid], pwstate)
-
 
 def explode(
     gitdir: Optional[str], lmsg: b4.LoreMessage, usefrom: Optional[str] = None
 ) -> List[email.message.EmailMessage]:
     import b4.ez
 
-    ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
+    ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False, pw_track=False)
     if ecode > 0:
         raise RuntimeError('Fetching unsuccessful')
 
@@ -458,6 +455,7 @@ def get_pr_from_github(ghurl: str) -> Optional[b4.LoreMessage]:
 
 
 def main(cmdargs: argparse.Namespace) -> None:
+    thanks_record = b4.get_thanks_record(cmdargs)
     gitdir = cmdargs.gitdir
     lmsg = None
 
@@ -599,7 +597,9 @@ def main(cmdargs: argparse.Namespace) -> None:
                 sys.exit(0)
             # We already have it locally, but record tracking info before
             # bailing out so that "b4 ty" remains possible for it later.
-            thanks_record_pr(lmsg)
+            if thanks_record:
+                thanks_record_pr(lmsg)
+            b4.patchwork_set_review_state([lmsg.msgid])
             sys.exit(1)
 
         # Is it at the tip of FETCH_HEAD?
@@ -616,4 +616,4 @@ def main(cmdargs: argparse.Namespace) -> None:
         logger.info('Pull request does not appear to be in this tree.')
         sys.exit(0)
 
-    fetch_remote(gitdir, lmsg, branch=cmdargs.branch)
+    fetch_remote(gitdir, lmsg, branch=cmdargs.branch, ty_track=thanks_record)

@@ -536,3 +536,109 @@ def test_merge_base_marker_unavailable_is_fatal(
     ):
         b4.mbox.get_merge_base(gitdir, body or cover_body, lser, cmdargs)
     assert e.value.code == 1
+
+
+@pytest.mark.parametrize(
+    'subcmd,extra_args,expect_exit,expect_pw_msgids',
+    [
+        # Each case reaches a different _record_am_state() call site
+        pytest.param('am', ['-o', '.'], None, 4, id='am'),
+        pytest.param('am', ['-o', '.', '-P', '2'], None, 1, id='am-cherrypick'),
+        pytest.param('shazam', [], 0, 4, id='shazam'),
+        pytest.param('shazam', ['-H'], 0, 4, id='shazam-H'),
+    ],
+)
+@pytest.mark.parametrize(
+    'cfg_val,cli_flags,expect_record',
+    [
+        pytest.param('yes', [], True, id='default'),
+        pytest.param('yes', ['--no-thanks-record'], False, id='cli-no'),
+        pytest.param('no', [], False, id='config-no'),
+        pytest.param('no', ['--thanks-record'], True, id='cli-yes-overrides-no'),
+    ],
+)
+def test_thanks_record_and_pw_review_state(
+    sampledir: str,
+    gitdir: str,
+    subcmd: str,
+    extra_args: List[str],
+    expect_exit: Optional[int],
+    expect_pw_msgids: int,
+    cfg_val: str,
+    cli_flags: List[str],
+    expect_record: bool,
+) -> None:
+    """The thanks record follows the knob; the Patchwork update never does."""
+    mfile = os.path.join(sampledir, 'shazam-git1-just-series.mbox')
+    b4.MAIN_CONFIG['thanks-record'] = cfg_val
+    b4.MAIN_CONFIG['pw-review-state'] = 'under-review'
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        ['--no-stdin', '--no-interactive', '--offline-mode', subcmd, '-m', mfile]
+        + extra_args
+        + cli_flags
+    )
+    with mock_patch('b4.patchwork_set_state') as mock_pw:
+        if expect_exit is not None:
+            with pytest.raises(SystemExit) as e:
+                b4.mbox.main(cmdargs)
+            assert e.value.code == expect_exit
+        else:
+            b4.mbox.main(cmdargs)
+
+    amfiles = [f for f in os.listdir(b4.get_data_dir()) if f.endswith('.am')]
+    assert len(amfiles) == (1 if expect_record else 0)
+    mock_pw.assert_called_once()
+    msgids, state = mock_pw.call_args[0]
+    assert len(msgids) == expect_pw_msgids
+    assert state == 'under-review'
+
+
+def _make_three_patch_series() -> b4.LoreSeries:
+    """Build a 3-patch series whose cover letter has an inline diff."""
+    cover = make_msg(
+        'cover@example.com',
+        '[PATCH 0/3] Series',
+        body='Range-diff:\n' + MINIMAL_DIFF,
+    )
+    lmbx = b4.LoreMailbox()
+    lmbx.add_message(cover)
+    for num, name in enumerate(('First', 'Second', 'Third'), 1):
+        lmbx.add_message(
+            make_msg(
+                f'p{num}@example.com',
+                f'[PATCH {num}/3] {name}',
+                body=MINIMAL_DIFF,
+                in_reply_to='cover@example.com',
+            )
+        )
+    lser = lmbx.get_series(codereview_trailers=False)
+    assert lser is not None
+    assert lser.patches[0] is not None
+    # A range-diff in the cover letter can look like a patch
+    lser.patches[0].has_diff = True
+    return lser
+
+
+@pytest.mark.parametrize(
+    'cherrypick,missing,expected',
+    [
+        pytest.param(None, None, ['p1', 'p2', 'p3'], id='all'),
+        pytest.param([1, 3], None, ['p1', 'p3'], id='cherrypick'),
+        pytest.param(None, 2, ['p1', 'p3'], id='missing-slot'),
+        pytest.param([2], 2, [], id='cherrypick-missing-slot'),
+    ],
+)
+def test_applied_patches(
+    cherrypick: Optional[List[int]], missing: Optional[int], expected: List[str]
+) -> None:
+    """Only applied patches count, and never the cover letter in slot 0.
+
+    The thanks record and the Patchwork update both use this list, so
+    this pins the patch set for both of them.
+    """
+    lser = _make_three_patch_series()
+    if missing is not None:
+        lser.patches[missing] = None
+    applied = b4.mbox._applied_patches(lser, cherrypick)
+    assert [pmsg.msgid for pmsg in applied] == [f'{m}@example.com' for m in expected]

@@ -125,15 +125,15 @@ def _sent(fake: _FakePw) -> List[Dict[str, Any]]:
 
 class TestPwConfigState:
     def test_unset_is_none(self) -> None:
-        assert b4.review.pw_config_state('pw-accept-state') is None
+        assert b4.pw_config_state('pw-accept-state') is None
 
     def test_empty_is_none(self) -> None:
         b4.MAIN_CONFIG['pw-accept-state'] = ''
-        assert b4.review.pw_config_state('pw-accept-state') is None
+        assert b4.pw_config_state('pw-accept-state') is None
 
     def test_set(self) -> None:
         b4.MAIN_CONFIG['pw-review-state'] = 'under-review'
-        assert b4.review.pw_config_state('pw-review-state') == 'under-review'
+        assert b4.pw_config_state('pw-review-state') == 'under-review'
 
 
 class TestResolvePwSeriesId:
