@@ -1970,6 +1970,7 @@ def _apply_followup_inline_comments(
     commit_shas: List[str],
     patches: List[Dict[str, Any]],
     followup_comments: Dict[int, List[Dict[str, Any]]],
+    my_email: str,
 ) -> int:
     """Store inline comments quoted in follow-ups under each sender's review.
 
@@ -1977,6 +1978,7 @@ def _apply_followup_inline_comments(
     comments, resolved against the real diff of the patch they are filed
     under.  Returns the number of comments stored; the caller saves them.
     """
+    my_email = my_email.lower()
     integrated = 0
     for display_idx, fc_list in followup_comments.items():
         # display_idx 0 = cover letter (skip), 1..N = patches
@@ -2001,7 +2003,8 @@ def _apply_followup_inline_comments(
                 continue
 
             reviewer_email = fc.get('fromemail', '')
-            if not reviewer_email:
+            # My own reply quotes what my review already holds
+            if not reviewer_email or reviewer_email.lower() == my_email:
                 continue
 
             # Skip if we already integrated this exact follow-up message
@@ -2066,8 +2069,9 @@ def _integrate_followup_inline_comments(
         liblore.utils.split_mbox(mbox_bytes), cover_msgid, patches
     )
 
+    my_email = str(b4.get_user_config().get('email', ''))
     integrated = _apply_followup_inline_comments(
-        topdir, commit_shas, patches, followup_comments
+        topdir, commit_shas, patches, followup_comments, my_email
     )
 
     if not integrated:

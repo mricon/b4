@@ -1937,7 +1937,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         Returns the number of inline comments integrated.
         """
         integrated = b4.review._apply_followup_inline_comments(
-            self._topdir, self._commit_shas, self._patches, followup_comments
+            self._topdir,
+            self._commit_shas,
+            self._patches,
+            followup_comments,
+            str(self._usercfg.get('email', '')),
         )
         if integrated:
             self._save_tracking()

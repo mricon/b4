@@ -1,4 +1,5 @@
 import argparse
+import copy
 import email.message
 import email.utils
 import importlib.util
@@ -4115,6 +4116,36 @@ class TestIntegrateFollowupInlineComments:
             patches[0]['reviews']['reviewer0@example.com']['comments'][0]['text']
             == 'Already here.'
         )
+
+    def test_own_followup_leaves_my_review_alone(self) -> None:
+        """My own reply coming back in the thread is not someone else's review.
+
+        My review already holds what I wrote; integrating the reply would
+        replace that with re-parsed copies.
+        """
+        my_email = 'reviewer0@example.com'
+        my_review = {
+            'name': 'Me',
+            'comments': [{'path': 'b/fs/file.c', 'line': 11, 'text': 'x'}],
+        }
+        patches: List[Dict[str, Any]] = [
+            {
+                'header-info': {'msgid': 'patch1@example.com'},
+                'title': 'patch 1',
+                'reviews': {my_email: copy.deepcopy(my_review)},
+            },
+        ]
+        followup_comments = self._make_followup_comments(
+            {1: [self._FOLLOWUP_BODY_WITH_DIFF]}
+        )
+
+        with mock.patch('b4.git_run_command', return_value=(1, '')):
+            integrated = review._apply_followup_inline_comments(
+                '/tmp', ['aaa'], patches, followup_comments, my_email
+            )
+
+        assert integrated == 0
+        assert patches[0]['reviews'][my_email] == my_review
 
 
 # ---------------------------------------------------------------------------
