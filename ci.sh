@@ -27,6 +27,7 @@ run 12 'ruff check'   uv run ruff check
 run 13 'ty check'     uv run ty check
 run 14 'mypy'         uv run mypy .
 run 15 'pyright'      uv run pyright
-run 16 'pytest'       uv run pytest --durations=20
+# worksteal rebalances when one worker draws a run of slow TUI tests.
+run 16 'pytest'       uv run pytest -n auto --dist worksteal --durations=20
 
 printf '\n=== CI PASSED ===\n'

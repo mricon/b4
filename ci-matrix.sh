@@ -40,6 +40,10 @@ set -eu
 # the full sweep instead of skipping it.
 PYTHONS="${PYTHONS-3.11 3.12 3.13 3.14 3.15}"
 
+# Every lane runs the full suite, so spreading it over all cores is what
+# keeps the whole matrix tolerable. Same flags as ci.sh.
+XDIST_ARGS="-n auto --dist worksteal"
+
 # Install any requested interpreters that are missing. This is an explicit
 # step because a dev may have set UV_PYTHON_DOWNLOADS=manual globally to
 # prevent `uv sync` from reaching out to the network mid-workflow; running
@@ -67,7 +71,7 @@ for py in $PYTHONS; do
         failed="$failed $py(import)"
         continue
     fi
-    if ! uv run pytest --durations=20; then
+    if ! uv run pytest $XDIST_ARGS --durations=20; then
         failed="$failed $py(pytest)"
         continue
     fi
@@ -92,11 +96,11 @@ if [ -n "$FLOOR_PY" ]; then
         failed="$failed floors(venv)"
     elif ! uv pip install --python "$floorenv" --resolution lowest-direct '.[tui,completion,bugs]'; then
         failed="$failed floors(install)"
-    elif ! uv pip install --python "$floorenv" pytest pytest-asyncio; then
+    elif ! uv pip install --python "$floorenv" pytest pytest-asyncio pytest-xdist; then
         failed="$failed floors(pytest-install)"
     elif ! "$floorenv/bin/python" -c 'import b4, sys; print("import b4 OK on", sys.version.split()[0])'; then
         failed="$failed floors(import)"
-    elif ! "$floorenv/bin/python" -m pytest --durations=20; then
+    elif ! "$floorenv/bin/python" -m pytest $XDIST_ARGS --durations=20; then
         failed="$failed floors(pytest)"
     fi
 
@@ -137,13 +141,13 @@ if [ -n "$PRERELEASE_PY" ]; then
         prerelease_failed="venv"
     elif ! uv pip install --python "$prereleaseenv" '.[tui,completion]'; then
         prerelease_failed="install-project"
-    elif ! uv pip install --python "$prereleaseenv" pytest pytest-asyncio; then
+    elif ! uv pip install --python "$prereleaseenv" pytest pytest-asyncio pytest-xdist; then
         prerelease_failed="pytest-install"
     elif ! "$prereleaseenv/bin/python" -c 'import b4, sys; print("import b4 OK on", sys.version.split()[0])'; then
         prerelease_failed="import"
     elif ! "$prereleaseenv/bin/b4" --version; then
         prerelease_failed="cli"
-    elif ! "$prereleaseenv/bin/python" -m pytest --durations=20; then
+    elif ! "$prereleaseenv/bin/python" -m pytest $XDIST_ARGS --durations=20; then
         prerelease_failed="pytest"
     fi
 

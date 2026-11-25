@@ -9,6 +9,21 @@ import pytest
 import b4
 
 
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config: pytest.Config) -> None:
+    # Under xdist every worker would open the same log_file with mode 'w',
+    # truncating and interleaving each other's output. Give each worker its
+    # own file so a failing test's debug log can still be read in one piece.
+    worker = os.environ.get('PYTEST_XDIST_WORKER')
+    if not worker:
+        return
+    log_file = config.getini('log_file')
+    plugin = config.pluginmanager.get_plugin('logging-plugin')
+    if log_file and plugin is not None:
+        stem, ext = os.path.splitext(log_file)
+        plugin.set_log_path(f'{stem}-{worker}{ext}')
+
+
 @pytest.fixture(scope='function', autouse=True)
 def settestdefaults(
     monkeypatch: pytest.MonkeyPatch,
