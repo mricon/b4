@@ -1765,13 +1765,14 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             )
             return
 
-        msgs = b4.review.collect_review_emails(
+        to_send = b4.review.collect_review_emails(
             self._series,
             self._patches,
             self._cover_text,
             self._topdir,
             self._commit_shas,
         )
+        msgs = [msg for _review, msg in to_send]
         legacy = None
         for target in [self._series] + list(self._patches):
             review = b4.review._get_my_review(target, self._usercfg)
@@ -1811,14 +1812,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             try:
                 self._reply_sent = True
                 self._tracking['series']['status'] = 'replied'
-                # Record what every non-skip review carried, so that the
-                # next send only carries what is added since.
-                my_email = str(self._usercfg.get('email', 'unknown@example.com'))
+                # Record what every sent review carried, so that the next
+                # send only carries what is added since.
                 current_rev = int(self._series.get('revision', 1))
-                for target in [self._series] + list(self._patches):
-                    review = target.get('reviews', {}).get(my_email, {})
-                    if review and review.get('patch-state') != 'skip':
-                        b4.review._mark_review_sent(review, current_rev)
+                for review, _msg in to_send:
+                    b4.review._mark_review_sent(review, current_rev)
                 if not self._save_tracking():
                     # Silence here means the next session offers these reviews
                     # as unsent and the maintainer sends them twice.

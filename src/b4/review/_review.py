@@ -4010,22 +4010,23 @@ def collect_review_emails(
     cover_text: str,
     topdir: str,
     commit_shas: List[str],
-) -> List[email.message.EmailMessage]:
+) -> List[Tuple[Dict[str, Any], email.message.EmailMessage]]:
     """Collect review emails to send for the given series.
 
     Only sends the maintainer's own reviews, not agent or other
-    reviewers' data.
+    reviewers' data.  Each email comes with the review it was built from,
+    so that only reviews which actually went out are recorded as sent.
     """
     usercfg = b4.get_user_config()
     my_email = str(usercfg.get('email', 'unknown@example.com'))
-    msgs: List[email.message.EmailMessage] = []
+    msgs: List[Tuple[Dict[str, Any], email.message.EmailMessage]] = []
 
     # Cover letter review (maintainer only)
     cover_review = series.get('reviews', {}).get(my_email, {})
     if cover_review and cover_review.get('patch-state') != 'skip':
         msg = _build_review_email(series, None, cover_review, cover_text, topdir, None)
         if msg is not None:
-            msgs.append(msg)
+            msgs.append((cover_review, msg))
 
     # Per-patch reviews (maintainer only)
     for idx, patch_meta in enumerate(patches):
@@ -4037,7 +4038,7 @@ def collect_review_emails(
             series, patch_meta, patch_review, cover_text, topdir, commit_sha
         )
         if msg is not None:
-            msgs.append(msg)
+            msgs.append((patch_review, msg))
 
     return msgs
 

@@ -4285,7 +4285,7 @@ class TestCollectReviewEmails:
 
     def _collect(
         self, on_cover: bool, review_extra: Dict[str, Any]
-    ) -> List[email.message.EmailMessage]:
+    ) -> List[Tuple[Dict[str, Any], email.message.EmailMessage]]:
         """Collect emails for a single review attached to the cover or a patch."""
         reviews = {self.MY_EMAIL: self._review(**review_extra)}
         if on_cover:

@@ -25,6 +25,7 @@ from textual.widgets import ListView
 
 import b4
 import b4.review
+import b4.review._review
 import b4.review.tracking
 from b4.review_tui._common import filter_range_diff_for_commit
 from b4.review_tui._review_app import FollowupItem, PatchListItem, ReviewApp
@@ -187,7 +188,7 @@ class TestTrailerConsolidation:
                     app._topdir,
                     app._commit_shas,
                 )
-            assert msgs == [mock.sentinel.email]
+            assert [msg for _review, msg in msgs] == [mock.sentinel.email]
 
 
 class TestReplyVerbatim:
@@ -696,17 +697,32 @@ class TestSendBookkeeping:
     never be able to claim the send failed."""
 
     async def _send(
-        self, gitdir: str, change_id: str, dryrun: bool = False, **patches: Any
-    ) -> Tuple[List[str], bool]:
-        """Drive action_send with a staged review and a send that succeeds.
+        self,
+        gitdir: str,
+        change_id: str,
+        dryrun: bool = False,
+        reviews: Optional[List[Dict[str, Any]]] = None,
+        **patches: Any,
+    ) -> Tuple[List[str], bool, List[Dict[str, Any]]]:
+        """Drive action_send with staged reviews and a send that succeeds.
 
-        *patches* are extra mock.patch.object() keyword targets on the app.
-        Returns (notification texts, app still running).
+        *reviews* are my reviews, one per patch; by default a single patch
+        with a reply and a trailer.  *patches* are extra mock.patch.object()
+        keyword targets on the app.
+        Returns (notification texts, app still running, patches after send).
         """
         import contextlib
 
+        if reviews is None:
+            reviews = [
+                {
+                    'reply': 'Looks good.',
+                    'trailers': ['Reviewed-by: Me <me@example.com>'],
+                    'patch-state': 'done',
+                }
+            ]
         branch, _shas = _create_review_branch_with_patches(
-            gitdir, change_id, ['patch 1']
+            gitdir, change_id, [f'patch {n}' for n in range(1, len(reviews) + 1)]
         )
         session = _build_session(gitdir, branch)
         session['email_dryrun'] = dryrun
@@ -715,13 +731,8 @@ class TestSendBookkeeping:
 
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            app._patches[0]['reviews'] = {
-                my_email: {
-                    'reply': 'Looks good.',
-                    'trailers': ['Reviewed-by: Me <me@example.com>'],
-                    'patch-state': 'done',
-                }
-            }
+            for patch, my_review in zip(app._patches, reviews):
+                patch['reviews'] = {my_email: my_review}
             with contextlib.ExitStack() as stack:
                 stack.enter_context(
                     mock.patch.object(app, 'suspend', lambda: contextlib.nullcontext())
@@ -747,7 +758,7 @@ class TestSendBookkeeping:
                 app.action_send()
                 await pilot.pause()
             texts = [str(call.args[0]) for call in notified.call_args_list]
-            return texts, app.is_running
+            return texts, app.is_running, app._patches
 
     @pytest.mark.asyncio
     async def test_unwritable_tracking_is_reported_but_not_as_a_send_failure(
@@ -756,7 +767,7 @@ class TestSendBookkeeping:
         """save_tracking_ref() returns False rather than raising, so this used
         to pass unnoticed -- and the next session would offer the same reviews
         as unsent, inviting the maintainer to send them twice."""
-        texts, running = await self._send(
+        texts, running, _ = await self._send(
             gitdir, 'send-notracking', _save_tracking={'return_value': False}
         )
         assert running
@@ -768,7 +779,7 @@ class TestSendBookkeeping:
     async def test_raising_bookkeeping_is_not_a_send_failure(self, gitdir: str) -> None:
         """The mail is on the list by then; reporting 'Send failed' would tell
         the maintainer to send it again."""
-        texts, running = await self._send(
+        texts, running, _ = await self._send(
             gitdir,
             'send-bookkeeping-boom',
             _mark_patches_answered={
@@ -785,10 +796,42 @@ class TestSendBookkeeping:
         """--email-dry-run logs the mail and stops there.  Stamping
         sent-revision on it would make the next real session treat these
         reviews as already sent and offer none of them."""
-        texts, running = await self._send(gitdir, 'send-dryrun', dryrun=True)
+        texts, running, _ = await self._send(gitdir, 'send-dryrun', dryrun=True)
         assert running
         assert any('Dry-run' in t for t in texts)
         assert not any('Sent 0 review email' in t for t in texts)
+
+    @pytest.mark.asyncio
+    async def test_a_review_that_did_not_go_out_is_not_recorded_as_sent(
+        self, gitdir: str
+    ) -> None:
+        """No email can be built for a patch without a message-id.  Recording
+        its review as sent anyway would claim that what it holds went out,
+        and it would never be offered again."""
+        stuck = {'trailers': ['Reviewed-by: Me <me@example.com>']}
+        fresh = {'trailers': ['Acked-by: Me <me@example.com>']}
+        build = b4.review._review._build_review_email
+
+        def _build(
+            series: Dict[str, Any],
+            patch_meta: Optional[Dict[str, Any]],
+            review: Dict[str, Any],
+            *args: Any,
+        ) -> Optional[email.message.EmailMessage]:
+            if review is stuck:
+                return None
+            return build(series, patch_meta, review, *args)
+
+        with mock.patch.object(b4.review._review, '_build_review_email', _build):
+            texts, running, patches = await self._send(
+                gitdir, 'send-not-built', reviews=[stuck, fresh]
+            )
+        assert running
+        assert any('Sent 1 review email' in t for t in texts)
+        my_reviews = [next(iter(p['reviews'].values())) for p in patches]
+        assert 'sent' in my_reviews[1]
+        assert 'sent' not in my_reviews[0]
+        assert 'sent-revision' not in my_reviews[0]
 
 
 class TestSessionRestorePoint:
