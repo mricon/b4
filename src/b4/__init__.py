@@ -389,6 +389,8 @@ DEFAULT_CONFIG: ConfigDictT = {
     'review-target-branch': None,
     # Default base commit pre-filled in the review take dialog
     'review-apply-base': None,
+    # Remotes whose remote-tracking branches show which patches have landed
+    'review-check-landed': None,
     # See review-reply-template.example
     'review-reply-template': None,
     # Do not patatt-sign outgoing review emails
@@ -5109,6 +5111,7 @@ def _setup_main_config(
         'review-perpatch-check-cmd',
         'review-series-check-cmd',
         'review-target-branch',
+        'review-check-landed',
     ]
     if topdir:
         wtcfg = os.path.join(topdir, '.b4-config')
