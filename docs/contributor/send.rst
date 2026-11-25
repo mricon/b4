@@ -154,6 +154,15 @@ settings::
        smtpUser = alice.developer@example.org
        smtpPass = [omitted]
 
+When b4 connects to the server, it introduces itself with your
+computer's hostname or IP address. Many servers record that name in
+the ``Received:`` header, so it becomes public in the list archives.
+To use a different name, set ``smtpDomain``, just like with
+``git send-email``::
+
+    [sendemail]
+       smtpDomain = example.org
+
 You can also set up ``msmtp`` or a similar tool and specify the
 ``sendmail``-compliant command via ``sendmailCmd``::
 

@@ -2543,10 +2543,13 @@ class TestSignBeforeConnect:
         with pytest.raises(RuntimeError, match='server unreachable'):
             b4.send_mail(conn, [_plain_msg('one')], fromaddr='alice@example.org')
 
-    def _capture_timeout(
-        self, monkeypatch: pytest.MonkeyPatch, timeout_cfg: Optional[str]
-    ) -> Any:
-        """Connect through get_smtp() and report the timeout it asked for."""
+    def _capture_smtp_kwargs(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        timeout_cfg: Optional[str] = None,
+        smtpdomain: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Connect through get_smtp() and report the kwargs it gave smtplib."""
         sendemail: Dict[str, Any] = {
             'smtpserver': 'smtp.example.org',
             'smtpserverport': '465',
@@ -2554,6 +2557,8 @@ class TestSignBeforeConnect:
             'smtpauth': 'none',
             'from': 'alice@example.org',
         }
+        if smtpdomain is not None:
+            sendemail['smtpdomain'] = smtpdomain
         monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', sendemail)
         main: Dict[str, Any] = dict()
         if timeout_cfg is not None:
@@ -2562,15 +2567,15 @@ class TestSignBeforeConnect:
 
         seen: Dict[str, Any] = dict()
 
-        def _fake_ssl(host: str, port: int, timeout: Any = None) -> Any:
-            seen['timeout'] = timeout
+        def _fake_ssl(host: str, port: int, **kwargs: Any) -> Any:
+            seen.update(kwargs)
             return _FakeSMTP(list())
 
         monkeypatch.setattr(smtplib, 'SMTP_SSL', _fake_ssl)
         smtp, _fromaddr = b4.get_smtp()
         assert isinstance(smtp, b4.SMTPConnector)
         smtp()
-        return seen['timeout']
+        return seen
 
     @pytest.mark.parametrize(
         'timeout_cfg,expected',
@@ -2589,7 +2594,26 @@ class TestSignBeforeConnect:
         timeout_cfg: Optional[str],
         expected: Optional[float],
     ) -> None:
-        assert self._capture_timeout(monkeypatch, timeout_cfg) == expected
+        kwargs = self._capture_smtp_kwargs(monkeypatch, timeout_cfg=timeout_cfg)
+        assert kwargs.get('timeout') == expected
+
+    @pytest.mark.parametrize(
+        'smtpdomain',
+        [
+            # Without it, smtplib greets with the local FQDN, which ends up
+            # in Received: headers on public archives.
+            pytest.param('outbound.example.org', id='set'),
+            # Unset must leave smtplib's own default alone, as before.
+            pytest.param(None, id='unset'),
+            # An empty value is "unset", not a request to send an empty EHLO.
+            pytest.param('', id='empty'),
+        ],
+    )
+    def test_smtp_domain(
+        self, monkeypatch: pytest.MonkeyPatch, smtpdomain: Optional[str]
+    ) -> None:
+        kwargs = self._capture_smtp_kwargs(monkeypatch, smtpdomain=smtpdomain)
+        assert kwargs.get('local_hostname') == (smtpdomain or None)
 
     def test_bad_timeout_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(

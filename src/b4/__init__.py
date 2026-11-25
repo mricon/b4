@@ -6464,6 +6464,9 @@ def get_smtp(
     smtpargs: Dict[str, Any] = dict()
     if timeout > 0:
         smtpargs['timeout'] = timeout
+    smtpdomain = sconfig.get('smtpdomain')
+    if smtpdomain:
+        smtpargs['local_hostname'] = str(smtpdomain)
 
     encryption = sconfig.get('smtpencryption')
     if dryrun:
