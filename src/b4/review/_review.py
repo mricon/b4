@@ -593,6 +593,7 @@ def load_tracking(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
             continue
         json_clean.append(line)
     tracking = json.loads('\n'.join(json_clean))
+    _adopt_older_sends(tracking)
     return cover_text, tracking
 
 
@@ -3777,10 +3778,7 @@ def _build_review_email(
 
     Returns None if there is nothing to send.
     """
-    to_send = _review_to_send(review)
-    if to_send is None:
-        return None
-    review = to_send
+    review = _review_to_send(review)
     trailers = review.get('trailers', [])
     reply_text = review.get('reply', '')
     comments = review.get('comments', [])
@@ -3946,16 +3944,13 @@ def _build_review_email(
     return msg
 
 
-def _review_to_send(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Return what of *review* is left to send, or None if it was sent.
+def _review_to_send(review: Dict[str, Any]) -> Dict[str, Any]:
+    """Return what of *review* is left to send.
 
     Only the trailers and comments added since the last send are returned;
     with nothing sent yet, the whole review is.  A sent reply is moved out
     of the review, so any reply left is new.
     """
-    if 'sent' not in review and review.get('sent-revision'):
-        # Sent by a b4 that did not record what went out
-        return None
     sent_trailers = review.get('sent', {}).get('trailers', [])
     to_send = dict(review)
     to_send['trailers'] = [
@@ -4002,6 +3997,19 @@ def _merge_sent_trailers(review: Dict[str, Any], trailers: List[str]) -> List[st
     """
     sent: List[str] = review.get('sent', {}).get('trailers', [])
     return sent + [t for t in trailers if t not in sent]
+
+
+def _adopt_older_sends(tracking: Dict[str, Any]) -> None:
+    """Record as sent in full the reviews that an older b4 sent.
+
+    That b4 stamped sent-revision on a review without recording what went
+    out.  It never sent a review twice, so all the review holds counts as
+    sent, and whatever is added from now on can follow up on it.
+    """
+    for target in [tracking.get('series', {}), *tracking.get('patches', [])]:
+        for review in target.get('reviews', {}).values():
+            if 'sent' not in review and review.get('sent-revision'):
+                _mark_review_sent(review, review['sent-revision'])
 
 
 def collect_review_emails(

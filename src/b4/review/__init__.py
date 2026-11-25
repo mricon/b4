@@ -2,6 +2,7 @@
 from b4.review._review import *  # noqa: F403
 from b4.review._review import (
     TRAILER_MENU_NAMES,
+    _adopt_older_sends,
     _apply_findings_locations,
     _apply_followup_inline_comments,
     _build_reply_from_comments,
@@ -76,6 +77,7 @@ __all__ = [
     '_mark_review_sent',
     '_merge_sent_comments',
     '_merge_sent_trailers',
+    '_adopt_older_sends',
     '_apply_followup_inline_comments',
     '_integrate_agent_reviews',
     '_extract_comments_from_quoted_reply',

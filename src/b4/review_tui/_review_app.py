@@ -871,9 +871,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 )
             return
 
-        review = b4.review._review_to_send(review) or {}
-        if not review or not (
-            review.get('trailers') or review.get('reply', '') or review.get('comments')
+        to_send = b4.review._review_to_send(review)
+        if not (
+            to_send.get('trailers')
+            or to_send.get('reply', '')
+            or to_send.get('comments')
         ):
             viewer.write('[dim]No reply will be sent for this patch.[/dim]')
             return
@@ -1773,22 +1775,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self._commit_shas,
         )
         msgs = [msg for _review, msg in to_send]
-        legacy = None
-        for target in [self._series] + list(self._patches):
-            review = b4.review._get_my_review(target, self._usercfg)
-            if review.get('patch-state') == 'skip':
-                continue
-            if b4.review._review_to_send(review) is None:
-                legacy = 'sent by an older b4 that did not record their content'
-                break
         if not msgs:
-            if legacy:
-                self.notify(f'Nothing new to send: reviews were {legacy}.')
-            else:
-                self.notify('No review data to send.')
+            self.notify('No review data to send.')
             return
-        if legacy:
-            self.notify(f'Not resending reviews {legacy}.', severity='warning')
 
         def _on_send_confirmed(confirmed: Optional[bool]) -> None:
             if not confirmed:

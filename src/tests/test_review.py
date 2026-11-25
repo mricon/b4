@@ -19,6 +19,7 @@ from b4.review import _review
 from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
 
 from .helpers.mail import AUTHOR, MINIMAL_DIFF, make_msg
+from .helpers.tracking import create_review_branch
 
 # The address-helper functions exposed via review_tui live in a module that
 # imports textual at load time, so the tests that exercise them need the [tui]
@@ -4367,13 +4368,6 @@ class TestReviewToSend:
                 ([T1], [C1]),
                 id='never-sent-sends-all',
             ),
-            # Sent by a b4 that did not record what went out: unknown, so
-            # nothing is resent.
-            pytest.param(
-                {'sent-revision': 1, 'trailers': [T1], 'comments': [C1]},
-                None,
-                id='older-b4-send-skipped',
-            ),
             pytest.param(
                 {**AFTER_SEND, 'trailers': [T1], 'comments': [C1_SENT]},
                 ([], []),
@@ -4394,14 +4388,55 @@ class TestReviewToSend:
     def test_left_to_send(
         self,
         my_review: Dict[str, Any],
-        expected: Optional[Tuple[List[str], List[Dict[str, Any]]]],
+        expected: Tuple[List[str], List[Dict[str, Any]]],
     ) -> None:
         to_send = review._review_to_send(my_review)
-        if expected is None:
-            assert to_send is None
-        else:
-            assert to_send is not None
-            assert (to_send['trailers'], to_send['comments']) == expected
+        assert (to_send['trailers'], to_send['comments']) == expected
+
+    def test_older_b4_send_counts_as_sent_in_full(self) -> None:
+        """A b4 that only stamped sent-revision did not record what went
+        out.  Loading such a review records all it holds as sent, so that
+        it can be followed up like any other."""
+        legacy: Dict[str, Any] = {
+            'sent-revision': 1,
+            'trailers': [self.T1],
+            'comments': [dict(self.C1)],
+            'reply': 'Looks good.\n',
+        }
+        never_sent: Dict[str, Any] = {'trailers': [self.T1], 'reply': 'Draft.\n'}
+        tracking: Dict[str, Any] = {
+            'series': {'reviews': {'me@example.com': copy.deepcopy(legacy)}},
+            'patches': [
+                {'reviews': {'me@example.com': copy.deepcopy(legacy)}},
+                {'reviews': {'me@example.com': copy.deepcopy(never_sent)}},
+                {},
+            ],
+        }
+        review._adopt_older_sends(tracking)
+
+        for target in (tracking['series'], tracking['patches'][0]):
+            adopted: Dict[str, Any] = target['reviews']['me@example.com']
+            to_send = review._review_to_send(adopted)
+            assert (to_send['trailers'], to_send['comments']) == ([], [])
+            assert 'reply' not in to_send
+            assert adopted['sent']['replies'] == ['Looks good.\n']
+            adopted['comments'].append(dict(self.C2))
+            assert review._review_to_send(adopted)['comments'] == [self.C2]
+        assert tracking['patches'][1]['reviews']['me@example.com'] == never_sent
+
+    def test_older_b4_send_adopted_on_load(self, gitdir: str) -> None:
+        """Every reader gets tracking data through load_tracking(), so that
+        is where an older send must be adopted for none of them to miss it."""
+        branch = create_review_branch(gitdir, 'older-send', patch_messages=['patch 1'])
+        cover_text, tracking = review.load_tracking(gitdir, branch)
+        tracking['patches'][0]['reviews'] = {
+            'me@example.com': {'sent-revision': 1, 'trailers': [self.T1]}
+        }
+        assert review.save_tracking_ref(gitdir, branch, cover_text, tracking)
+
+        _cover_text, loaded = review.load_tracking(gitdir, branch)
+        my_review = loaded['patches'][0]['reviews']['me@example.com']
+        assert my_review['sent'] == {'trailers': [self.T1]}
 
     def test_mark_keeps_every_sent_reply(self) -> None:
         """Each send's reply is kept, so the prior review context shows
