@@ -15,6 +15,7 @@ import email.message
 import os
 import pathlib
 import sqlite3
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
@@ -78,6 +79,24 @@ def _static_text(widget: Any) -> str:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _settle_tracking_app(app: Any, pilot: Any) -> None:
+    """Wait for TrackingApp to finish its startup work.
+
+    on_mount() starts a ``_startup_rescan`` worker thread. When that worker
+    finds a changed branch, it replaces ``#tracking-list`` with a rebuilt
+    one. A plain ``pilot.pause()`` decides the app is idle by watching CPU
+    time, and a thread blocked on ``git`` uses none, so the test can see
+    the old list or no list at all. This waits for the worker itself.
+    """
+    await app.workers.wait_for_complete()
+    # The first pause runs the worker's StateChanged handler. That handler
+    # only queues _refresh_list with call_later(), so the second pause is
+    # what makes sure the rebuild has run, without relying on the idle
+    # heuristic.
+    await pilot.pause()
+    await pilot.pause()
 
 
 def _seed_db(identifier: str, series_list: List[Dict[str, Any]]) -> None:
@@ -251,7 +270,7 @@ class TestTrackingAppStartup:
 
         app = TrackingApp('test-empty')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Should show the "no tracked series" message
             empty = app.query('#tracking-empty')
             assert len(empty) > 0
@@ -263,7 +282,7 @@ class TestTrackingAppStartup:
 
         app = TrackingApp('test-listing')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
             # All are 'new' (actionable); sorted by added_at desc — last
@@ -284,7 +303,7 @@ class TestTrackingNavigation:
 
         app = TrackingApp('test-nav')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             assert lv.index == 0
 
@@ -320,7 +339,7 @@ class TestTrackingNavigation:
 
         app = TrackingApp('test-scroll')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             # Move deep enough into the list that the view scrolls down,
             # then back up a bit so the cursor sits mid-viewport rather
@@ -359,7 +378,7 @@ class TestTrackingNavigation:
 
         app = TrackingApp('test-help')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
 
             await pilot.press('question_mark')
             await pilot.pause()
@@ -386,7 +405,7 @@ class TestRefreshListWithoutFooter:
 
         app = TrackingApp('test-nofooter')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
 
             await app.query_one(Footer).remove()
             await app._refresh_list()
@@ -423,7 +442,7 @@ class TestTrackingLimit:
 
         app = TrackingApp('test-limit')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             assert len(self._items(app)) == 3
 
             # Filter by subject substring; the active limit shows in the title
@@ -470,7 +489,7 @@ class TestTrackingLimitPrefixes:
 
         app = TrackingApp('test-limit-status')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('l')
             await pilot.pause()
             from textual.widgets import Input
@@ -637,7 +656,7 @@ class TestTrackingStatusGroups:
 
         app = TrackingApp('test-groups')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
             statuses = [i.series['status'] for i in items]
@@ -697,7 +716,7 @@ class TestTrackingStatusGroups:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
             by_cid = {i.series['change_id']: i for i in items}
@@ -733,7 +752,7 @@ class TestTrackingStatusGroups:
 
         app = TrackingApp('test-archived')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
             assert len(items) == 1
@@ -749,7 +768,7 @@ class TestTrackingFocusChangeId:
 
         app = TrackingApp('test-focus', focus_change_id='test-change-charlie')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             assert lv.index == 0  # charlie is 1st (last inserted, added_at desc)
 
@@ -763,7 +782,7 @@ class TestTrackingQuit:
 
         app = TrackingApp('test-quit')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('q')
             await pilot.pause()
             # Bare 'q' must not quit; it shows a hint pointing at 'Q'
@@ -804,7 +823,7 @@ class TestTrackingWithReviewBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
             assert len(items) == 1
@@ -830,7 +849,7 @@ class TestTrackingWithReviewBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('r')
             await pilot.pause()
             # App should exit with the branch name
@@ -856,7 +875,7 @@ class TestTrackingWithReviewBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('enter')
             await pilot.pause()
             assert app.return_value == f'b4/review/{change_id}'
@@ -883,7 +902,7 @@ class TestTrackingWithReviewBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # The action menu should appear for 'waiting' via Enter
             await pilot.press('r')
             await pilot.pause()
@@ -921,7 +940,7 @@ class TestTrackingWithReviewBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('r')
             await pilot.pause()
 
@@ -955,7 +974,7 @@ class TestTrackingActionMenu:
 
         app = TrackingApp('test-action-new')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -997,7 +1016,7 @@ class TestTrackingActionMenu:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -1030,7 +1049,7 @@ class TestTrackingActionMenu:
 
         app = TrackingApp('test-action-snoozed')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -1063,7 +1082,7 @@ class TestTrackingActionMenu:
 
         app = TrackingApp('test-enter-new')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('enter')
             await pilot.pause()
             # Should open action menu, not exit the app
@@ -1102,7 +1121,7 @@ class TestTrackingUpgradeNewSeries:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -1132,7 +1151,7 @@ class TestTrackingUpgradeNewSeries:
 
         app = TrackingApp('test-upgrade-none')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -1174,7 +1193,7 @@ class TestTrackingUpgradeNewSeries:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -1227,7 +1246,7 @@ class TestTrackingSnooze:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
 
             # Open action menu and select snooze
             await pilot.press('a')
@@ -1278,7 +1297,7 @@ class TestTrackingSnooze:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             await pilot.press('s')
@@ -1317,7 +1336,7 @@ class TestTrackingSnooze:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             await pilot.press('s')
@@ -1384,7 +1403,7 @@ class TestTrackingUpgradeGating:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # check_action gate is has_newer alone, regardless of status.
             assert app.check_action('update_revision', ()) is True
             await pilot.press('a')
@@ -1407,7 +1426,7 @@ class TestTrackingUpgradeGating:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             assert app.check_action('update_revision', ()) is True
             await pilot.press('a')
             await pilot.pause()
@@ -1439,7 +1458,7 @@ class TestTrackingUpgradeGating:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             assert app.check_action('update_revision', ()) is False
             await pilot.press('a')
             await pilot.pause()
@@ -1467,7 +1486,7 @@ class TestTrackingUpgradeGating:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app.action_update_revision()
             await pilot.pause()
 
@@ -1506,7 +1525,7 @@ class TestTrackingAbandon:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # First series is 'abandon-1' (last inserted, added_at desc)
             assert app._selected_series is not None
             assert app._selected_series['change_id'] == 'abandon-1'
@@ -1550,7 +1569,7 @@ class TestTrackingAbandon:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             await pilot.press('A')
@@ -1591,7 +1610,7 @@ class TestTrackingAbandon:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             # For reviewing, abandon is in the action list
@@ -1639,7 +1658,7 @@ class TestTrackingAbandon:
 
         app = TrackingApp(identifier, 'master')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_abandon_confirmed(True, change_id, branch_name, True)
             await pilot.pause()
 
@@ -1671,7 +1690,7 @@ class TestTrackingAbandon:
 
         app = TrackingApp(identifier, 'master')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             assert app._archive_branch(change_id, 1, branch_name)
             await pilot.pause()
 
@@ -1709,7 +1728,7 @@ class TestTrackingAbandon:
             identifier, None, original_head=['checkout', '--detach', start_sha]
         )
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_abandon_confirmed(True, change_id, branch_name, True)
             await pilot.pause()
 
@@ -1742,7 +1761,7 @@ class TestTrackingAbandon:
 
         app = TrackingApp(identifier, 'master')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_abandon_confirmed(True, change_id, branch_name, True)
             await pilot.pause()
 
@@ -1773,7 +1792,7 @@ class TestTrackingWaiting:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -1812,7 +1831,7 @@ class TestTrackingWaiting:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert isinstance(app.screen, ActionScreen)
@@ -1856,7 +1875,7 @@ class TestTrackingWaiting:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
 
             # Simulate an external DB change (another process updated the status)
             conn = tracking.get_db(identifier)
@@ -1911,7 +1930,7 @@ class TestTrackingWaiting:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
 
             # Open action menu and mark as waiting
             await pilot.press('a')
@@ -1949,7 +1968,7 @@ class TestTrackingDetailPanel:
 
         app = TrackingApp('test-detail')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
 
             from textual.containers import Vertical
 
@@ -1988,6 +2007,47 @@ class TestTrackingDetailPanel:
             await pilot.pause()
             assert panel.styles.height is not None
             assert panel.styles.height.value == 0
+
+
+class TestTrackingStartupSettle:
+    """The startup rescan rebuilds the list after mount; tests must wait for it."""
+
+    @pytest.mark.asyncio
+    async def test_settle_waits_for_slow_startup_rescan(self, gitdir: str) -> None:
+        """_settle_tracking_app() must return only after the rescan rebuild.
+
+        A seeded row has no branch_sha, so the rescan sees its branch as
+        changed and copies the branch's subject into the DB. The sleep in
+        the rescan makes the race certain, and the old subject in the list
+        means a test was asserting on the list from before the rebuild.
+        """
+        identifier = 'test-settle'
+        _create_review_branch(
+            gitdir, 'settle-1', identifier=identifier, subject='Subject from branch'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'settle-1',
+                    'subject': '[PATCH] seeded subject',
+                    'status': 'reviewing',
+                },
+            ],
+        )
+        real_rescan = tracking.rescan_branches
+
+        def slow_rescan(*args: Any, **kwargs: Any) -> Dict[str, int]:
+            time.sleep(0.5)
+            return real_rescan(*args, **kwargs)
+
+        app = TrackingApp(identifier)
+        with patch.object(tracking, 'rescan_branches', slow_rescan):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await _settle_tracking_app(app, pilot)
+                lv = app.query_one('#tracking-list', ListView)
+                items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
+                assert [i.series['subject'] for i in items] == ['Subject from branch']
 
 
 class TestTrackingMultipleSeries:
@@ -2029,7 +2089,7 @@ class TestTrackingMultipleSeries:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
             assert len(items) == 3
@@ -2070,7 +2130,7 @@ class TestTrackingMultipleSeries:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             lv = app.query_one('#tracking-list', ListView)
             # Active series (reviewing) comes first in the list
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
@@ -2107,7 +2167,7 @@ class TestTrackingSnoozeRemembersChoice:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
 
             # Snooze the first series with a tag
             await pilot.press('a')
@@ -2193,7 +2253,7 @@ class TestLinkRevisionAction:
         )
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             assert 'link' in _get_action_keys(app)
@@ -2247,7 +2307,7 @@ class TestSeriesLifecycle:
         # === Phase 1: reviewing → waiting ===
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Verify action menu for 'reviewing'
             await pilot.press('a')
             await pilot.pause()
@@ -2270,7 +2330,7 @@ class TestSeriesLifecycle:
         # === Phase 2: waiting → reviewing (re-review) ===
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Verify action menu for 'waiting'
             await pilot.press('a')
             await pilot.pause()
@@ -2293,7 +2353,7 @@ class TestSeriesLifecycle:
         # === Phase 3: reviewing → snoozed ===
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             await pilot.press('s')  # snooze shortcut
@@ -2315,7 +2375,7 @@ class TestSeriesLifecycle:
         # === Phase 4: snoozed → unsnoozed (back to reviewing) ===
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Verify action menu for 'snoozed'
             await pilot.press('a')
             await pilot.pause()
@@ -2351,7 +2411,7 @@ class TestSeriesLifecycle:
         # === Phase 6: verify 'accepted' action menu ===
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             actions = _get_action_keys(app)
@@ -2383,7 +2443,7 @@ class TestSeriesLifecycle:
         app = TrackingApp(identifier)
         with patch.object(TrackingApp, '_archive_branch', _mock_archive):
             async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
+                await _settle_tracking_app(app, pilot)
                 await pilot.press('a')
                 await pilot.pause()
                 actions = _get_action_keys(app)
@@ -2416,7 +2476,7 @@ class TestSeriesLifecycle:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             await pilot.press('s')
@@ -2452,7 +2512,7 @@ class TestSeriesLifecycle:
         # Verify action menu: 'review' (reopen) and 'archive' should be available
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             actions = _get_action_keys(app)
@@ -2482,7 +2542,7 @@ class TestSeriesLifecycle:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             actions = _get_action_keys(app)
@@ -2511,7 +2571,7 @@ class TestSeriesLifecycle:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             actions = _get_action_keys(app)
@@ -2556,7 +2616,7 @@ class TestSeriesLifecycle:
         # Unsnooze should restore to 'waiting'
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             await pilot.press('u')
@@ -2592,7 +2652,7 @@ class TestSeriesLifecycle:
 
             app = TrackingApp(identifier)
             async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
+                await _settle_tracking_app(app, pilot)
                 await pilot.press('a')
                 await pilot.pause()
                 actions = _get_action_keys(app)
@@ -2642,7 +2702,7 @@ class TestSeriesLifecycle:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('a')
             await pilot.pause()
             actions = _get_action_keys(app)
@@ -2682,7 +2742,7 @@ class TestSeriesLifecycle:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             assert len(app._all_series) == 1
             assert app._all_series[0].get('status') == 'partial'
 
@@ -2905,7 +2965,7 @@ class TestSeriesLifecycle:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             problems: List[str] = []
             orig_notify = app.notify
 
@@ -3424,7 +3484,7 @@ class TestTargetBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Press t to open target branch dialog
             await pilot.press('t')
             await pilot.pause()
@@ -3467,7 +3527,7 @@ class TestTargetBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('t')
             await pilot.pause()
             assert isinstance(app.screen, TargetBranchScreen)
@@ -3512,7 +3572,7 @@ class TestTargetBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Detail panel should be visible after selecting series
             target_widget = app.query_one('#detail-target', Static)
             text = _static_text(target_widget)
@@ -3540,7 +3600,7 @@ class TestTargetBranch:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             await pilot.press('t')
             await pilot.pause()
             assert isinstance(app.screen, TargetBranchScreen)
@@ -3748,7 +3808,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Call the method directly — worker should not be pushed
             app._do_update_revision(change_id, 1, 2)
             await pilot.pause()
@@ -3870,7 +3930,7 @@ class TestUpdateRevisionWorkflow:
         )
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_update_prepared(
                 None, 'noop-1', 1, 2, 'v2@ex.com', 'subj', 'b4/review/noop-1'
             )
@@ -3900,7 +3960,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_update_prepared(
                 result,
                 'base-1',
@@ -3941,7 +4001,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_update_prepared(
                 result,
                 'title-1',
@@ -3984,7 +4044,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_update_prepared(
                 result,
                 'title-2',
@@ -4020,7 +4080,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._on_update_base_selected(
                 None,
                 lser,
@@ -4054,7 +4114,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4116,7 +4176,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4205,7 +4265,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4306,7 +4366,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4388,7 +4448,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4452,7 +4512,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4498,7 +4558,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4550,7 +4610,7 @@ class TestUpdateRevisionWorkflow:
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4613,7 +4673,7 @@ class TestCheckoutFailure:
         the key handler -- taking the session down over one series."""
         app = TrackingApp('test-checkout-fail')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             self._checkout(app, SystemExit(1))
             await pilot.pause()
             assert app.is_running
@@ -4633,7 +4693,7 @@ class TestCheckoutFailure:
             raise SystemExit(1)
 
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4664,7 +4724,7 @@ class TestCheckoutFailure:
         created: List[str] = []
 
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             with (
                 patch.object(
                     app, 'suspend', return_value=__import__('contextlib').nullcontext()
@@ -4703,7 +4763,7 @@ class TestLoadSeriesCaching:
 
         app = TrackingApp('cache-nochg')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             tips_id = id(app._cached_branch_tips)
             app._check_db_changed()
             await pilot.pause()
@@ -4719,7 +4779,7 @@ class TestLoadSeriesCaching:
 
         app = TrackingApp('cache-full-inv')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             assert app._cached_branch_tips is not None
             app._invalidate_caches()
             assert app._cached_branch_tips is None
@@ -4738,7 +4798,7 @@ class TestLoadSeriesCaching:
 
         app = TrackingApp('cache-sel-inv')
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             # Manually populate ART cache with test data
             app._cached_art_counts = {
                 'b4/review/test-change-alpha': (1, 2, 0),
@@ -5773,7 +5833,7 @@ class TestBadCharsGuard:
         _seed_db(identifier, [])
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             result: List[Any] = []
             app.push_screen(BadCharsScreen(self._make_error()), callback=result.append)
             await pilot.pause()
@@ -5796,7 +5856,7 @@ class TestBadCharsGuard:
         _seed_db(identifier, [])
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             result: List[Any] = []
             app.push_screen(BadCharsScreen(self._make_error()), callback=result.append)
             await pilot.pause()
@@ -5813,7 +5873,7 @@ class TestBadCharsGuard:
         series = {'message_id': 'badchars@example.com'}
         retried: List[bool] = []
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._confirm_badchars(
                 self._make_error(), series, lambda: retried.append(True)
             )
@@ -5832,7 +5892,7 @@ class TestBadCharsGuard:
         series = {'message_id': 'badchars@example.com'}
         retried: List[bool] = []
         async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+            await _settle_tracking_app(app, pilot)
             app._confirm_badchars(
                 self._make_error(), series, lambda: retried.append(True)
             )
