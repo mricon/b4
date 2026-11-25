@@ -10,7 +10,7 @@
 # canary for that floor (installing b4 --no-deps means we run against 1.14.0
 # rather than pip-upgrading it).
 #
-# EPEL + CRB are needed for shtab and pytest-asyncio.
+# EPEL + CRB are needed for shtab, pytest-asyncio and pytest-xdist.
 
 set -eu
 
@@ -23,7 +23,7 @@ dnf config-manager --set-enabled crb >/dev/null 2>&1 || true
 dnf -q -y install \
     git python3 python3-pip \
     python3-pygit2 python3-dkimpy python3-requests python3-shtab \
-    python3-pytest python3-pytest-asyncio \
+    python3-pytest python3-pytest-asyncio python3-pytest-xdist \
     >/dev/null
 
 # shellcheck disable=SC1091

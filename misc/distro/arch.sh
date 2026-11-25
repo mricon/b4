@@ -10,7 +10,7 @@ set -eu
 pacman -Syu --noconfirm --needed \
     git python python-pip \
     python-textual python-pygit2 python-dkim python-requests python-shtab \
-    python-pytest python-pytest-asyncio \
+    python-pytest python-pytest-asyncio python-pytest-xdist \
     >/dev/null
 
 # shellcheck disable=SC1091

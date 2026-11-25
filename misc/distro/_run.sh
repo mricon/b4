@@ -36,7 +36,7 @@ import importlib
 
 # dkim is the import name provided by the dkimpy package.
 for name in ('textual', 'pygit2', 'dkim', 'requests', 'shtab',
-             'patatt', 'liblore', 'ezgb', 'pytest'):
+             'patatt', 'liblore', 'ezgb', 'pytest', 'xdist'):
     try:
         mod = importlib.import_module(name)
     except Exception as exc:  # noqa: BLE001 -- report, don't fail
@@ -54,4 +54,6 @@ for name in ('textual', 'pygit2', 'dkim', 'requests', 'shtab',
 PY
 
 echo '=== pytest ==='
-python -m pytest src/tests -q -p no:cacheprovider
+# Same parallel flags as ci.sh; lanes run one at a time, so each container
+# can have every core.
+python -m pytest src/tests -q -p no:cacheprovider -n auto --dist worksteal

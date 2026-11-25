@@ -11,7 +11,7 @@ apt-get -qq update >/dev/null
 apt-get -qq install -y --no-install-recommends \
     git python3 python3-pip python3-venv \
     python3-textual python3-pygit2 python3-dkim python3-requests python3-shtab \
-    python3-pytest python3-pytest-asyncio \
+    python3-pytest python3-pytest-asyncio python3-pytest-xdist \
     >/dev/null
 
 # shellcheck disable=SC1091
