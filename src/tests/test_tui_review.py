@@ -15,7 +15,7 @@ import copy
 import datetime
 import email.message
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest import mock
 
 import pytest
@@ -30,7 +30,7 @@ import b4.review._review
 import b4.review.tracking
 from b4.review._review import NO_COVER_NOTE
 from b4.review_tui._common import filter_range_diff_for_commit
-from b4.review_tui._modals import ConfirmScreen, NoteScreen
+from b4.review_tui._modals import ConfirmScreen, NoteScreen, SendScreen
 from b4.review_tui._review_app import FollowupItem, PatchListItem, ReviewApp
 
 from .helpers.mail import followup_thread
@@ -844,6 +844,33 @@ class TestSkippedReplies:
             viewer = app.query_one('#diff-viewer', RichLog)
             assert reply in '\n'.join(line.text for line in viewer.lines)
 
+    @pytest.mark.asyncio
+    async def test_hiding_skipped_keeps_unsent_replies_visible(
+        self, gitdir: str
+    ) -> None:
+        """A hidden patch must not carry mail out unseen: H only hides
+        skipped patches that have nothing left to send."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'skipped-hide', ['patch 1', 'patch 2']
+        )
+        session = _build_session(gitdir, branch)
+        my_email = str(session['usercfg']['email'])
+        session['patches'][0]['reviews'] = {
+            my_email: {'patch-state': 'skip', 'reply': 'Not taking this.'}
+        }
+        session['patches'][1]['reviews'] = {my_email: {'patch-state': 'skip'}}
+        app = ReviewApp(session)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('H')
+            await pilot.pause()
+            shown = [
+                item.patch_idx
+                for item in app.query_one('#patch-list', ListView).query(PatchListItem)
+            ]
+            assert 1 in shown
+            assert 2 not in shown
+
 
 class TestSendBookkeeping:
     """Everything after the SMTP handoff is bookkeeping, and bookkeeping must
@@ -855,13 +882,15 @@ class TestSendBookkeeping:
         change_id: str,
         dryrun: bool = False,
         reviews: Optional[List[Dict[str, Any]]] = None,
+        check: Optional[Callable[[ReviewApp], None]] = None,
         **patches: Any,
     ) -> Tuple[List[str], bool, List[Dict[str, Any]]]:
         """Drive action_send with staged reviews and a send that succeeds.
 
         *reviews* are my reviews, one per patch; by default a single patch
-        with a reply and a trailer.  *patches* are extra mock.patch.object()
-        keyword targets on the app.
+        with a reply and a trailer.  *check* looks at the app once the send
+        is over.  *patches* are extra mock.patch.object() keyword targets on
+        the app.
         Returns (notification texts, app still running, patches after send).
         """
         import contextlib
@@ -910,6 +939,8 @@ class TestSendBookkeeping:
                 notified = stack.enter_context(mock.patch.object(app, 'notify'))
                 app.action_send()
                 await pilot.pause()
+                if check is not None:
+                    check(app)
             texts = [str(call.args[0]) for call in notified.call_args_list]
             return texts, app.is_running, app._patches
 
@@ -948,18 +979,49 @@ class TestSendBookkeeping:
     async def test_skipped_reply_is_sent(self, gitdir: str) -> None:
         """Only the skipped patch that has a reply sends, and only it is
         recorded as sent."""
-        texts, _running, patches = await self._send(
-            gitdir,
-            'send-skipped',
-            reviews=[
-                {'patch-state': 'skip', 'reply': 'Not taking this, see v2.'},
-                {'patch-state': 'skip'},
-            ],
-        )
+        with mock.patch(
+            'b4.review_tui._review_app.SendScreen', wraps=SendScreen
+        ) as screen:
+            texts, _running, patches = await self._send(
+                gitdir,
+                'send-skipped',
+                reviews=[
+                    {'patch-state': 'skip', 'reply': 'Not taking this, see v2.'},
+                    {'patch-state': 'skip'},
+                ],
+            )
         assert any('Sent 1 review email' in t for t in texts)
+        (skipped_msgids,) = [
+            call.kwargs['skipped_msgids'] for call in screen.call_args_list
+        ]
+        assert len(skipped_msgids) == 1
         my_email = str(b4.get_user_config()['email'])
         assert 'sent-revision' in patches[0]['reviews'][my_email]
         assert 'sent-revision' not in patches[1]['reviews'][my_email]
+
+    @pytest.mark.asyncio
+    async def test_sent_skipped_reply_leaves_the_hidden_list(self, gitdir: str) -> None:
+        """H keeps a skipped patch listed only while it has mail to send,
+        so the row must go once that mail is out."""
+
+        def _check(app: ReviewApp) -> None:
+            shown = [
+                item.patch_idx
+                for item in app.query_one('#patch-list', ListView).query(PatchListItem)
+            ]
+            assert 1 not in shown
+            assert 2 in shown
+
+        await self._send(
+            gitdir,
+            'send-skipped-hidden',
+            reviews=[
+                {'patch-state': 'skip', 'reply': 'Not taking this.'},
+                {'patch-state': 'done', 'reply': 'Applied, thanks.'},
+            ],
+            check=_check,
+            _hide_skipped={'new': True},
+        )
 
     @pytest.mark.asyncio
     async def test_draft_hint_does_not_offer_skip(self, gitdir: str) -> None:

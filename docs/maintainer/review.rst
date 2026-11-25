@@ -809,11 +809,17 @@ you sent) takes precedence over it.
 Pressing ``d`` or ``x`` toggles the state for the current patch. The
 patch list on the left shows the state visually: done patches appear in
 bold, skipped and unchanged patches appear dimmed. Press ``H`` to hide
-skipped patches from the list entirely — useful for large series where
-many patches are irrelevant to your review.
+skipped patches from the list — useful for large series where many
+patches are irrelevant to your review.
 
-Any unsent replies, comments, or trailers on skipped patches are still
-included when previewing and sending review emails.
+Skipping a patch keeps it out of a take, not out of the conversation:
+any unsent replies, comments, or trailers on skipped patches are still
+included when previewing and sending review emails, so you can explain
+why you are not taking a patch. For the same reason, ``H`` keeps
+skipped patches with something left to send in the list, and the send
+confirmation marks their emails as ``(skipped)``. To hold back a draft
+on a skipped patch, delete the draft.
+
 When taking patches via cherry-pick, skipped patches are pre-deselected
 in the patch selection dialog.
 

@@ -429,7 +429,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             )
             patch_meta = self._patches[idx] if idx < len(self._patches) else {}
             state = b4.review._get_patch_state(patch_meta, self._usercfg)
-            if self._hide_skipped and state == 'skip':
+            if self._is_hidden(patch_meta):
                 continue
             mark = PATCH_STATE_MARKERS[state]
             label = f'{mark} {patch_num}/{total} {subject[:40]}'
@@ -450,6 +450,28 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 lv.scroll_visible()
 
             self.call_after_refresh(_restore)
+
+    def _is_hidden(self, target: Dict[str, Any]) -> bool:
+        """Return True if hiding skipped patches takes *target* off the list.
+
+        A skipped patch still sends its reply, so one with anything left
+        to send stays visible: hidden rows must not carry mail out unseen.
+        """
+        return (
+            self._hide_skipped
+            and b4.review._get_patch_state(target, self._usercfg) == 'skip'
+            and not b4.review._has_unsent(
+                b4.review._get_my_review(target, self._usercfg)
+            )
+        )
+
+    def _rebuild_patch_list(self) -> None:
+        """Repopulate the patch list, moving the selection off a hidden row."""
+        target = self._get_current_review_target()
+        if target and self._is_hidden(target):
+            self._selected_idx = 0 if self._has_cover else 1
+        self._populate_patch_list()
+        self._show_content(self._selected_idx)
 
     def _append_followup_items(self, lv: ListView, display_idx: int) -> None:
         """Append FollowupItem entries to *lv* for each follow-up message."""
@@ -856,12 +878,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 else None
             )
 
-        to_send = b4.review._review_to_send(review)
-        if not (
-            to_send.get('trailers')
-            or to_send.get('reply', '')
-            or to_send.get('comments')
-        ):
+        if not b4.review._has_unsent(review):
             viewer.write('[dim]No reply will be sent for this patch.[/dim]')
             return
 
@@ -1758,7 +1775,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         new_state = '' if current == 'skip' else 'skip'
         b4.review._set_patch_state(target, self._usercfg, new_state)
         self._save_tracking()
-        if self._hide_skipped and new_state == 'skip':
+        if self._is_hidden(target):
             # Patch just got skipped while hiding is on — repopulate
             self._selected_idx = 0 if self._has_cover else 1
             self._populate_patch_list()
@@ -1775,13 +1792,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     def action_hide_skipped(self) -> None:
         """Toggle visibility of skipped patches in the patch list."""
         self._hide_skipped = not self._hide_skipped
-        # If current selection is skipped and we're hiding, move to first visible
-        if self._hide_skipped:
-            target = self._get_current_review_target()
-            if target and b4.review._get_patch_state(target, self._usercfg) == 'skip':
-                self._selected_idx = 0 if self._has_cover else 1
-        self._populate_patch_list()
-        self._show_content(self._selected_idx)
+        self._rebuild_patch_list()
         self.notify(
             'Skipped patches hidden' if self._hide_skipped else 'Skipped patches shown'
         )
@@ -1817,6 +1828,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         if not msgs:
             self.notify('No review data to send.')
             return
+        skipped_msgids = {
+            str(msg['Message-Id'])
+            for review, msg in to_send
+            if review.get('patch-state') == 'skip'
+        }
 
         def _on_send_confirmed(confirmed: Optional[bool]) -> None:
             if not confirmed:
@@ -1854,11 +1870,17 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     )
                 self._mark_patches_answered(msgs)
                 mark_outgoing_seen(msgs)
+                if self._hide_skipped:
+                    # Skipped patches were only listed for the mail they
+                    # had left to send
+                    self._rebuild_patch_list()
             except Exception as ex:
                 logger.debug('Post-send bookkeeping failed: %s', ex, exc_info=True)
                 self.notify(f'Sent, but recording it failed: {ex}', severity='warning')
 
-        self.push_screen(SendScreen(msgs), _on_send_confirmed)
+        self.push_screen(
+            SendScreen(msgs, skipped_msgids=skipped_msgids), _on_send_confirmed
+        )
 
     def on_click(self, event: Click) -> None:
         """Detect clicks on follow-up headers or hint gutter markers."""

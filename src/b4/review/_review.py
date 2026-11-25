@@ -4002,6 +4002,14 @@ def _review_to_send(review: Dict[str, Any]) -> Dict[str, Any]:
     return to_send
 
 
+def _has_unsent(review: Dict[str, Any]) -> bool:
+    """Return True if a send of *review* would carry anything."""
+    to_send = _review_to_send(review)
+    return bool(
+        to_send.get('trailers') or to_send.get('reply', '') or to_send.get('comments')
+    )
+
+
 def _mark_review_sent(review: Dict[str, Any], revision: int) -> None:
     """Record what a send of *review* carried, see _review_to_send().
 

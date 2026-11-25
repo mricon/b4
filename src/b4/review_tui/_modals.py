@@ -691,9 +691,16 @@ class SendScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, msgs: List[email.message.EmailMessage]) -> None:
+    def __init__(
+        self,
+        msgs: List[email.message.EmailMessage],
+        skipped_msgids: Optional[Set[str]] = None,
+    ) -> None:
         super().__init__()
         self._msgs = msgs
+        # Message-Ids of replies to skipped patches, which are easy to
+        # forget about since skipped patches are dimmed in the list
+        self._skipped_msgids = skipped_msgids or set()
 
     def compose(self) -> ComposeResult:
         text = Text()
@@ -704,6 +711,8 @@ class SendScreen(ModalScreen[bool]):
             text.append('\n  ')
             text.append('Subject:', style='bold')
             text.append(f' {subj}')
+            if str(msg['Message-Id']) in self._skipped_msgids:
+                text.append(' (skipped)', style='dim')
             to_count = len(email.utils.getaddresses([msg['To']])) if msg['To'] else 0
             cc_count = len(email.utils.getaddresses([msg['Cc']])) if msg['Cc'] else 0
             msg_bcc = {

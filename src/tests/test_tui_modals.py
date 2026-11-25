@@ -94,6 +94,26 @@ class TestSendScreen:
             assert text.count('1 To, 1 Bcc') == 1
             assert text.count('1 To\n') == 1
 
+    @pytest.mark.asyncio
+    async def test_skipped_patch_reply_is_labelled(self) -> None:
+        """A skipped patch still sends its reply, so the confirmation says
+        which outgoing mail belongs to one."""
+        msgs = []
+        for n in (1, 2):
+            msg = email.message.EmailMessage()
+            msg['Subject'] = f'Re: [PATCH {n}/2] patch {n}'
+            msg['Message-Id'] = f'<reply{n}@example.org>'
+            msgs.append(msg)
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(SendScreen(msgs, skipped_msgids={'<reply2@example.org>'}))
+            await pilot.pause()
+
+            text = static_text(app.screen.query(Static).first())
+            assert 'patch 1 (skipped)' not in text
+            assert 'patch 2 (skipped)' in text
+
 
 # ---------------------------------------------------------------------------
 # HelpScreen
