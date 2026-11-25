@@ -17,14 +17,6 @@ import b4.mbox
 
 logger = b4.logger
 
-# Supported diff algorithms we will try to match
-try_diff_algos: List[str] = [
-    'myers',
-    'histogram',
-    'patience',
-    'minimal',
-]
-
 
 def try_links(links: Set[str]) -> None:
     logger.info('Try following these Link trailers:')
@@ -71,8 +63,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         logger.error('Merge commit detected, please specify a single-parent commit.')
         sys.exit(1)
 
-    # Look at the commit message and find any Link: trailers
-    links: Set[str] = set()
+    # Look at the commit message for Link: and Message-ID: trailers
     ecode, out = b4.git_run_command(
         topdir,
         ['show', '--no-patch', '--format=%B', commit, '--'],
@@ -81,13 +72,9 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         logger.error('Could not get commit message for %s', commit)
         sys.exit(1)
     trailers, _ = b4.LoreMessage.find_trailers(out)
-    ltrs = [t for t in trailers if t.name.lower() == 'link']
-    if ltrs:
-        links = set(ltr.value for ltr in ltrs)
-
-    msgids = b4.get_all_msgids_from_urls(links)
-    # Make a copy for finding best match later
-    linked_msgids = set(msgids)
+    links = {t.value for t in trailers if t.lname == 'link'}
+    linked_msgids = b4.get_trailer_msgids(trailers)
+    msgids = set(linked_msgids)
 
     # Find commit's author and subject from git
     ecode, out = b4.git_run_command(
@@ -108,56 +95,34 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     # Convert into YYYYMMDD format for xapian range search
     pidate = cdate_dt.strftime('%Y%m%d')
     logger.info('Attempting to match by exact patch-id...')
-    showargs = [
-        '--format=email',
-        '--binary',
-        '--encoding=utf-8',
-        '--find-renames',
-    ]
-    # Keep a record so we don't try git-patch-id on identical patches
-    bpatches: Set[bytes] = set()
+    # The patch-ids tried so far, used to pick the matching patch later
+    patch_ids: Set[str] = set()
     msgs: Optional[List[EmailMessage]] = None
-    for algo in try_diff_algos:
-        logger.debug('Trying with diff-algorithm=%s', algo)
-        algoarg = f'--diff-algorithm={algo}'
-        logger.debug('showargs=%s', showargs + [algoarg])
-        ecode, bpatch = b4.git_run_command(
-            topdir,
-            ['show'] + showargs + [algoarg] + [commit, '--'],
-            decode=False,
-        )
-        if ecode > 0:
-            logger.error('Could not get a patch out of %s', commit)
-            sys.exit(1)
-        if bpatch in bpatches:
-            logger.debug('Already saw this patch, skipping diff-algorithm=%s', algo)
-            continue
-        bpatches.add(bpatch)
-        gitargs = ['patch-id', '--stable']
-        ecode, out = b4.git_run_command(topdir, gitargs, stdin=bpatch)
-        if ecode > 0 or not len(out.strip()):
-            logger.error('Could not compute patch-id for commit %s', commit)
-            sys.exit(1)
-        patch_id = out.split(maxsplit=1)[0]
-        logger.debug('Patch-id for commit %s is %s', commit, patch_id)
-        logger.info(
-            'Trying to find matching series by patch-id %s (%s)', patch_id, algo
-        )
-        # Limit lookup by date prior to the commit date, to weed out any false-positives from
-        # backports or from erroneously resent series
-        extra_query = f'AND d:..{pidate}'
-        logger.debug('extra_query=%s', extra_query)
-        msgs = b4.get_msgs_by_patch_id(
-            patch_id, nocache=cmdargs.nocache, extra_query=extra_query
-        )
-        if msgs:
-            logger.info('Found matching series by patch-id')
-            for msg in msgs:
-                msgid = b4.LoreMessage.get_clean_msgid(msg)
-                if msgid:
-                    logger.debug('Adding from patch-id matches: %s', msgid)
-                    msgids.add(msgid)
-            break
+    try:
+        for algo, patch_id in b4.git_commit_patch_ids(topdir, commit):
+            patch_ids.add(patch_id)
+            logger.debug('Patch-id for commit %s is %s (%s)', commit, patch_id, algo)
+            logger.info(
+                'Trying to find matching series by patch-id %s (%s)', patch_id, algo
+            )
+            # Limit lookup by date prior to the commit date, to weed out any
+            # false-positives from backports or from erroneously resent series
+            extra_query = f'AND d:..{pidate}'
+            logger.debug('extra_query=%s', extra_query)
+            msgs = b4.get_msgs_by_patch_id(
+                patch_id, nocache=cmdargs.nocache, extra_query=extra_query
+            )
+            if msgs:
+                logger.info('Found matching series by patch-id')
+                for msg in msgs:
+                    msgid = b4.LoreMessage.get_clean_msgid(msg)
+                    if msgid:
+                        logger.debug('Adding from patch-id matches: %s', msgid)
+                        msgids.add(msgid)
+                break
+    except RuntimeError as ex:
+        logger.error('%s', ex)
+        sys.exit(1)
 
     if not msgs:
         logger.info('Attempting to match by author email and subject...')
@@ -275,32 +240,14 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
                 all_lmsgs.append(lmsg)
 
         logger.debug('Number of candidate patches: %d', len(all_lmsgs))
-        # First try to find the exact message by Linked message-id
-        best_match: Optional[b4.LoreMessage] = None
-        for lmsg in all_lmsgs:
-            if lmsg.msgid in linked_msgids:
-                logger.debug('matched by message-id')
-                best_match = lmsg
-                break
-        if not best_match:
-            # Next, try to find by exact patch-id
-            for lmsg in all_lmsgs:
-                if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # ty:ignore[possibly-unresolved-reference] # broken since 3ae277e9c7dd3e1df61a14884aabdd5834ad1201
-                    logger.debug('matched by exact patch-id')
-                    best_match = lmsg
-                    break
-        if not best_match:
-            # Finally, try to find by subject match
-            for lmsg in all_lmsgs:
-                if lmsg.subject == csubj:
-                    logger.debug('matched by subject')
-                    best_match = lmsg
-                    break
-        if not best_match:
+        found = b4.match_posted_patch(all_lmsgs, linked_msgids, patch_ids, csubj)
+        if not found:
             logger.error('Could not find a matching patch in any series!')
             if links:
                 try_links(links)
             sys.exit(1)
+        best_match, how = found
+        logger.debug('matched by %s', how)
 
         print_one_match(best_match.full_subject, linkmask % best_match.msgid)
 
@@ -333,27 +280,17 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     logger.info('This patch belongs in the following series:')
     logger.info('---')
     for lser in lsers:
-        firstmsg: Optional[b4.LoreMessage] = None
         pref = f'  v{lser.revision}: '
-        if lser.has_cover:
-            firstmsg = lser.patches[0]
-        for lmsg in lser.patches[1:]:
-            if lmsg is None:
-                continue
-            if firstmsg is None:
-                firstmsg = lmsg
-            if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # ty:ignore[possibly-unresolved-reference] # broken since inception in 16329336c1c8faba853b11238a16249306742505
-                logger.debug('Matched by exact patch-id')
-                break
-            if lmsg.subject == csubj:
-                logger.debug('Matched by subject')
-                break
-
+        firstmsg = next((lmsg for lmsg in lser.patches if lmsg is not None), None)
         if firstmsg is None:
             logger.error('Internal error: no patches in the series?')
             sys.exit(1)
-        if lmsg is None:
-            # Use the first patch in the series as a fallback
+        found = b4.match_posted_patch(lser.patches[1:], linked_msgids, patch_ids, csubj)
+        if found:
+            lmsg, how = found
+            logger.debug('Matched by %s', how)
+        else:
+            # Link the start of the series when no patch in it matches
             lmsg = firstmsg
         logger.info('%s%s', pref, firstmsg.full_subject)
         logger.info(

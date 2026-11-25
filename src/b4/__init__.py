@@ -41,8 +41,10 @@ from typing import (
     Any,
     BinaryIO,
     Callable,
+    Collection,
     Dict,
     Generator,
+    Iterable,
     Iterator,
     List,
     Literal,
@@ -8215,6 +8217,90 @@ def get_link_msgids_from_lmsg(lmsg: 'LoreMessage') -> Set[str]:
         t.value for t in trailers if t.name.lower() in {'link', 'buglink', 'closes'}
     }
     return get_all_msgids_from_urls(urls)
+
+
+#: A patch-id depends on the diff algorithm, so matching a commit to a posted
+#: patch has to try every algorithm the patch's author may have used.
+DIFF_ALGORITHMS: Tuple[str, ...] = ('myers', 'histogram', 'patience', 'minimal')
+
+
+def get_trailer_msgids(trailers: Iterable['LoreTrailer']) -> Set[str]:
+    """Return the message-ids named by Link: and Message-ID: trailers.
+
+    Unlike get_link_msgids_from_lmsg, BugLink: and Closes: are left out:
+    they name the report a commit fixes, not the patch it came from.
+    """
+    urls = {t.value for t in trailers if t.lname == 'link'}
+    msgids = get_all_msgids_from_urls(urls)
+    msgids.update(t.value.strip('<>') for t in trailers if t.lname == 'message-id')
+    return msgids
+
+
+def git_commit_patch_ids(
+    gitdir: Optional[str], commit: str
+) -> Iterator[Tuple[str, str]]:
+    """Yield (diff algorithm, patch-id) for a commit, one per distinct patch-id.
+
+    Lazy, because every algorithm costs a git show and callers usually stop
+    at the first patch-id that matches.
+    """
+    seen_patches: Set[bytes] = set()
+    seen_ids: Set[str] = set()
+    for algo in DIFF_ALGORITHMS:
+        ecode, bpatch = git_run_command(
+            gitdir,
+            [
+                'show',
+                '--format=email',
+                '--binary',
+                '--encoding=utf-8',
+                '--find-renames',
+                f'--diff-algorithm={algo}',
+                commit,
+                '--',
+            ],
+            decode=False,
+        )
+        if ecode > 0:
+            raise RuntimeError(f'Could not get a patch out of {commit}')
+        if bpatch in seen_patches:
+            continue
+        seen_patches.add(bpatch)
+        ecode, out = git_run_command(gitdir, ['patch-id', '--stable'], stdin=bpatch)
+        if ecode > 0 or not out.strip():
+            raise RuntimeError(f'Could not compute patch-id for commit {commit}')
+        patch_id = out.split(maxsplit=1)[0]
+        if patch_id in seen_ids:
+            continue
+        seen_ids.add(patch_id)
+        yield algo, patch_id
+
+
+def match_posted_patch(
+    candidates: Iterable[Optional['LoreMessage']],
+    msgids: Collection[str],
+    patch_ids: Collection[str],
+    subject: Optional[str] = None,
+) -> Optional[Tuple['LoreMessage', str]]:
+    """Find the posted patch a commit came from among *candidates*.
+
+    Tries the message-ids the commit names, then its patch-ids, then the
+    subject, and returns the first candidate that matches with how it
+    matched: 'msgid', 'patch-id' or 'subject'. The subject is a guess, so
+    callers that act on a match without a human looking at it pass none.
+    """
+    patches = [lmsg for lmsg in candidates if lmsg is not None]
+    for lmsg in patches:
+        if lmsg.msgid in msgids:
+            return lmsg, 'msgid'
+    for lmsg in patches:
+        if lmsg.git_patch_id and lmsg.git_patch_id in patch_ids:
+            return lmsg, 'patch-id'
+    if subject is not None:
+        for lmsg in patches:
+            if lmsg.subject == subject:
+                return lmsg, 'subject'
+    return None
 
 
 def map_codereview_trailers(

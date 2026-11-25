@@ -160,21 +160,26 @@ def _link(msgid: str) -> str:
     return str(b4.get_main_config()['linkmask']) % msgid
 
 
-def test_link_trailer_beats_newer_patch_id_match(
-    gitdir: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    'trailer',
+    ['Link: https://patch.msgid.link/v1@example.com', 'Message-ID: <v1@example.com>'],
+)
+def test_linked_message_id_beats_newer_patch_id_match(
+    gitdir: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    trailer: str,
 ) -> None:
-    """Both revisions carry the same diff; the one the commit links to wins.
+    """Both revisions carry the same diff; the one the commit names wins.
 
-    Without the Link: preference dig would pick the newest revision, which
-    is the wrong one when a maintainer applied an earlier revision. v2 also
-    adds a patch, because revisions with identical patches count as one
-    series and only the newest is kept.
+    Without this preference dig would pick the newest revision, which is
+    the wrong one when a maintainer applied an earlier revision. The
+    message-id can come from a Link: trailer or, with b4 am -i, from a
+    Message-ID: trailer. v2 also adds a patch, because revisions with
+    identical patches count as one series and only the newest is kept.
     """
     commit = _commit(
-        gitdir,
-        'file1.txt',
-        'linked change\n',
-        'dig: linked change\n\nLink: https://patch.msgid.link/v1@example.com\n',
+        gitdir, 'file1.txt', 'linked change\n', f'dig: linked change\n\n{trailer}\n'
     )
     extra = _commit(gitdir, 'file2.txt', 'extra change\n', 'dig: extra change\n')
     v1 = _posted(gitdir, commit, 'v1@example.com')
