@@ -313,6 +313,8 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
     try:
         from b4.bugs._tui import BugListApp
     except ImportError as e:
+        if not b4.is_missing_thirdparty_module(e):
+            raise
         logger.critical('The TUI requires the %s library.', e.name)
         logger.critical('Install it with: pip install b4[tui]')
         sys.exit(1)

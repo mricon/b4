@@ -11,6 +11,7 @@ belong to an optional extra must not break that check when that extra's
 dependency is absent.
 """
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -121,3 +122,78 @@ def test_bugs_without_ezgb_hints_at_the_extra() -> None:
     assert result.returncode == 1, f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}'
     assert 'Traceback' not in result.stderr
     assert 'pip install b4[bugs]' in result.stdout + result.stderr
+
+
+_TUI_GUARD_SCRIPT = textwrap.dedent("""
+    import argparse
+    import importlib
+    import logging
+    import sys
+    import types
+
+    cmd_module, tui_module, breakage = sys.argv[1:4]
+
+    if breakage == 'no-extra':
+        # Simulate the [tui] extra not being installed.  Block every
+        # package it provides, because which one b4 imports first is
+        # an implementation detail.
+        class _Blocker:
+            def find_spec(self, name, path, target=None):
+                if name.split('.')[0] in ('textual', 'rich'):
+                    raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+                return None
+
+        sys.meta_path.insert(0, _Blocker())
+    elif breakage == 'stale-name':
+        # A b4 module that lacks the name the guard imports, as happens
+        # when a series reintroduces a symbol that moved elsewhere.
+        sys.modules[tui_module] = types.ModuleType(tui_module)
+    elif breakage == 'missing-module':
+        sys.modules[tui_module] = None
+
+    logging.basicConfig(format='%(message)s', level=logging.DEBUG)
+
+    importlib.import_module(cmd_module).cmd_tui(argparse.Namespace())
+""")
+
+
+@pytest.mark.parametrize(
+    'cmd_module,tui_module',
+    [
+        ('b4.review._review', 'b4.review_tui._entry'),
+        ('b4.bugs', 'b4.bugs._tui'),
+    ],
+)
+@pytest.mark.parametrize(
+    'breakage,hint_expected',
+    [
+        ('no-extra', True),
+        ('stale-name', False),
+        ('missing-module', False),
+    ],
+)
+def test_tui_import_guard_blames_only_missing_extra(
+    cmd_module: str, tui_module: str, breakage: str, hint_expected: bool
+) -> None:
+    """The TUI import guard must not disguise b4's own import errors.
+
+    Only a missing third-party dependency means the ``[tui]`` extra is
+    absent.  A broken import inside b4 is a bug, and telling the user to
+    install an extra they already have hides the traceback that would
+    point at it.
+    """
+    result = subprocess.run(
+        [sys.executable, '-c', _TUI_GUARD_SCRIPT, cmd_module, tui_module, breakage],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    if hint_expected:
+        assert 'Traceback' not in result.stderr, output
+        assert re.search(r'requires the (textual|rich) library', output), output
+        assert 'pip install b4[tui]' in output
+    else:
+        assert 'Traceback' in result.stderr, output
+        assert 'pip install b4[tui]' not in output

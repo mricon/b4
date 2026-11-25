@@ -222,6 +222,19 @@ def fail_precondition(
     sys.exit(1)
 
 
+def is_missing_thirdparty_module(ex: ImportError) -> bool:
+    """Tell a missing optional dependency apart from a broken b4 import.
+
+    Guards around optional extras catch ImportError so they can print an
+    install hint, but that also catches b4's own import bugs (a stale
+    ``from b4.x import name``), and an install hint for those hides the
+    traceback that would point at the real problem.
+    """
+    if not isinstance(ex, ModuleNotFoundError) or not ex.name:
+        return False
+    return ex.name.split('.')[0] != 'b4'
+
+
 HUNK_RE = re.compile(r'^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@')
 FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
 DIFF_RE = re.compile(

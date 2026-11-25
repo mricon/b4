@@ -3275,6 +3275,8 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
     try:
         from b4.review_tui._entry import run_tracking_tui
     except ImportError as e:
+        if not b4.is_missing_thirdparty_module(e):
+            raise
         logger.critical('The TUI requires the %s library.', e.name)
         logger.critical('Install it with: pip install b4[tui]')
         sys.exit(1)
