@@ -32,6 +32,54 @@ v0.17
 		: Colored dot display in tracking list (git-bug deterministic color algorithm)
 		: Extend the review limit command to filter by label: prefix
 		: Reuse LabelScreen/AddLabelScreen label UI from the bugs TUI (extract to _common.py)
+	[_] Recognize patches that have landed elsewhere (b4.review-check-landed)
+		: Bernhard Kaindl, https://msgid.link/20261103-detect-merged-v1-0-743a882c6127@gmail.com
+		: Reimplemented: v1 did a shallow fetch into the user's repository,
+		: looked up fork parents on GitHub, and changed the series status itself
+		: Least surprise: no fetching and no network; only remotes the user
+		: already has and keeps up to date
+		: Typical case: a multi-subsystem series where several maintainers each
+		: take their part; with a linux-next remote, one remote covers them all
+		: b4.review-check-landed: multi-valued list of remote names, from git
+		: config only (never .b4-config); unknown remote names warn and are ignored
+		: Exact matches only, because landed patches are skipped automatically:
+		: Link:/Message-ID: msgid first, then patch-id --stable over every diff
+		: algorithm (as b4 dig does); the subject only selects patch-id candidates
+		: A missed match is safe (the patch stays up for review); a false one is not
+		[_] Tests for b4 dig's current matching (there are none today)
+			: Link msgid, patch-id with a non-default diff algorithm, subject fallback
+		[_] Move dig's matching into core helpers, keeping dig's behaviour
+			: commit_link_msgids(), commit_patch_ids() (lazy over try_diff_algos),
+			: a shared best-match ladder where the subject step is optional
+			: Removes the possibly-unbound patch_id ignores in dig.py
+		[_] Landed index: one git log pass over refs/remotes/<name>/* per sweep
+			: Bounded by --not <base-commit> when known, else --since=@<sent - slack>
+			: msgid -> commit from Link:/Message-ID: trailers, subject -> commits
+			: for patch-id candidates
+			: Runs on u/U and in cron through the same code path
+		[_] Record landed patches per patch
+			: series_patches.landed_commit in the DB (schema bump)
+			: Tracking JSON: patches[N].landed holds the commit, so agents and
+			: other tools see which patches landed elsewhere; written under the
+			: same rules as other tracking updates on u (checked-out branches are
+			: left alone)
+			: Not under reviews[<email>]: landed is a fact about the patch, not a
+			: reviewer's decision
+			: Recomputed on every sweep: a patch dropped from a remote (e.g. a
+			: linux-next rebuild) stops being landed
+		[_] Derived "landed" patch state, handled everywhere skip is
+			: Hidden with skipped patches in the review TUI, no review email,
+			: left out of take preselection (take defaults to cherry-pick)
+			: Its own glyph, so it is not mistaken for a manual skip
+			: misc/agent-reviewer.md: do not review patches marked landed
+		[_] Series shows as landed once every patch has landed
+			: A display state, never stored as a status; it only replaces
+			: new/reviewing/replied/waiting, so accepted/partial/queued/thanked
+			: and the take -> thank -> archive chain stay untouched
+			: Partly landed series: the details panel lists the landed patches
+		[_] Docs: maintainer/review.rst, config.rst
+		: Not in this series: batch actions, fetching, "Applied, thanks" replies,
+		: moving b4 ty's auto_locate_series to the shared helpers
 [_] `b4 pr` improvements
 	[_] Compose and send pull requests to upstream (git-request-pull style)
 		: The producer counterpart to b4 pr's existing consumer side
