@@ -497,6 +497,23 @@ mailing lists. To keep replies concise, b4 shows at most 5 lines of
 diff context above each comment and collapses larger gaps with a
 ``> [...]`` marker.
 
+**Following up after a send**
+
+You can keep reviewing a revision after you sent your review. Add a
+comment or a trailer and send again: b4 sends only what is new since
+the last send.
+
+* A comment you already sent stays in the diff view. When you press
+  ``r``, the editor opens a fresh buffer that shows it with the ``|``
+  prefix, marked ``(sent)``. Like comments from other reviewers, these
+  lines are not sent.
+* A trailer you already sent stays ticked in the trailer menu and is
+  not sent again. To take back a ``NACKed-by`` you sent, tick the
+  trailer you want instead, and b4 sends that one.
+
+A review sent by an older b4, which did not record what it sent, counts
+as sent in full.
+
 The left pane summarises the review state per reviewer using a trailer
 overlay. This overlay always shows all reviewers — both your own review
 and any external reviewers — so you can see at a glance who has
