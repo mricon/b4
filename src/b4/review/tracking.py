@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS series (
     attestation TEXT DEFAULT 'pending',
     target_branch TEXT,
     is_rethreaded INTEGER DEFAULT 0,
+    thread_msgids TEXT,
     UNIQUE (change_id, revision)
 );
 
@@ -213,6 +214,9 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
             )
     if version < 11:
         conn.execute(LANDED_PATCHES_DDL)
+        existing = {row[1] for row in conn.execute('PRAGMA table_info(series)')}
+        if 'thread_msgids' not in existing:
+            conn.execute('ALTER TABLE series ADD COLUMN thread_msgids TEXT')
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -2678,6 +2682,27 @@ def _latest_date_from_msgs(msgs: List[Any]) -> Optional[str]:
     return latest.astimezone(datetime.timezone.utc).isoformat()
 
 
+def get_thread_msgids(
+    conn: sqlite3.Connection, change_id: str, revision: int
+) -> Optional[Set[str]]:
+    """Return the message-ids the last update saw in a series' thread.
+
+    None means no update has recorded them yet, so callers cannot tell
+    which messages are new and must skip any accounting that depends on it.
+
+    This is kept in the database rather than read from the thread cached
+    on the review branch: that cache is not refreshed while the branch is
+    checked out, and would call the same messages new on every update.
+    """
+    row = conn.execute(
+        'SELECT thread_msgids FROM series WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return set(json.loads(row[0]))
+
+
 def update_message_count_from_msgs(
     conn: sqlite3.Connection,
     change_id: str,
@@ -2685,6 +2710,7 @@ def update_message_count_from_msgs(
     msgs: List[Any],
     topdir: Optional[str] = None,
     seen_bump: int = 0,
+    refresh_blob: bool = False,
 ) -> bool:
     """Update message count and thread blob from already-fetched messages.
 
@@ -2695,6 +2721,14 @@ def update_message_count_from_msgs(
     replies), except that ``seen_message_count`` is advanced by
     *seen_bump* — the caller's count of new-to-the-thread messages that
     are already read (e.g. the maintainer's own replies).
+
+    The message-ids seen here are recorded for get_thread_msgids(), so the
+    next update can tell which messages are new.
+
+    The thread blob on the review branch is rewritten when the count changed
+    or *refresh_blob* says the cached thread is stale, but never while the
+    branch is checked out: the maintainer is working on it right there. The
+    caller notices the stale cache on a later update and asks again.
 
     Returns True if the database was changed, False otherwise.
     """
@@ -2740,19 +2774,30 @@ def update_message_count_from_msgs(
                 (count, now, last_activity, change_id, revision),
             )
     else:
-        # No change — just stamp the check time, skip commit
+        # No change — just stamp the check time
         conn.execute(
             'UPDATE series SET last_update_check = ?'
             ' WHERE change_id = ? AND revision = ?',
             (now, change_id, revision),
         )
-        conn.commit()
-        return False
-
+    msgids = sorted(
+        {msgid for msgid in map(b4.LoreMessage.get_clean_msgid, msgs) if msgid}
+    )
+    conn.execute(
+        'UPDATE series SET thread_msgids = ? WHERE change_id = ? AND revision = ?',
+        (json.dumps(msgids), change_id, revision),
+    )
     conn.commit()
-    if topdir and msgs:
+    changed = existing_count is None or count != existing_count
+
+    if (
+        topdir
+        and msgs
+        and (changed or refresh_blob)
+        and not b4.git_branch_checked_out(topdir, f'b4/review/{change_id}')
+    ):
         _store_thread_blob(topdir, change_id, msgs)
-    return True
+    return changed
 
 
 def _store_thread_blob(topdir: str, change_id: str, msgs: List[Any]) -> Optional[str]:

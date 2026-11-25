@@ -2593,9 +2593,9 @@ def _own_message_entries(
 def _prev_thread_msgids(topdir: str, change_id: str) -> Optional[Set[str]]:
     """Msgids from the previously stored thread blob, or None if unavailable.
 
-    None means "no reliable previous snapshot" — callers must treat that
-    as "cannot tell which messages are new" and skip any accounting that
-    depends on it.
+    This tells whether the blob is stale, not which messages are new:
+    the blob is not refreshed while its branch is checked out. For that,
+    see tracking.get_thread_msgids().
     """
     branch = REVIEW_BRANCH_PREFIX + change_id
     if not b4.git_branch_exists(topdir, branch):
@@ -2906,6 +2906,13 @@ def update_series_tracking(
     if thread_msgs and change_id:
         mconn = None
         try:
+            conn = b4.review.tracking.get_db(identifier)
+            try:
+                known_msgids = b4.review.tracking.get_thread_msgids(
+                    conn, change_id, current_rev
+                )
+            finally:
+                conn.close()
             from b4.review import messages
 
             mconn = messages.get_db()
@@ -2914,20 +2921,16 @@ def update_series_tracking(
                 own_entries = _own_message_entries(msgs, myaddr)
                 if own_entries:
                     messages.set_flags_bulk(mconn, own_entries, 'Seen')
-            if topdir:
-                prev_msgids = _prev_thread_msgids(topdir, change_id)
-                if prev_msgids is not None:
-                    new_msgids = []
-                    for msg in thread_msgs:
-                        mid = b4.LoreMessage.get_clean_msgid(msg)
-                        if mid and mid not in prev_msgids:
-                            new_msgids.append(mid)
-                    flags_map = messages.get_flags_bulk(mconn, new_msgids)
-                    seen_bump = sum(
-                        1
-                        for mid in new_msgids
-                        if 'Seen' in flags_map.get(mid, '').split()
-                    )
+            if known_msgids is not None:
+                new_msgids = []
+                for msg in thread_msgs:
+                    mid = b4.LoreMessage.get_clean_msgid(msg)
+                    if mid and mid not in known_msgids:
+                        new_msgids.append(mid)
+                flags_map = messages.get_flags_bulk(mconn, new_msgids)
+                seen_bump = sum(
+                    1 for mid in new_msgids if 'Seen' in flags_map.get(mid, '').split()
+                )
         except Exception as ex:
             logger.debug('Could not auto-mark own messages as read: %s', ex)
         finally:
@@ -2940,6 +2943,12 @@ def update_series_tracking(
     # moves past reviewing (accepted/thanked), or the maintainer never
     # sees follow-up discussion on applied series.
     if thread_msgs and change_id:
+        # A cache skipped while its branch was checked out is refreshed
+        # once it no longer matches the thread, even with no new message
+        cached_msgids: Optional[Set[str]] = None
+        if topdir:
+            cached_msgids = _prev_thread_msgids(topdir, change_id)
+        thread_msgids = {b4.LoreMessage.get_clean_msgid(m) for m in thread_msgs}
         try:
             conn = b4.review.tracking.get_db(identifier)
             b4.review.tracking.update_message_count_from_msgs(
@@ -2949,6 +2958,8 @@ def update_series_tracking(
                 thread_msgs,
                 topdir=topdir,
                 seen_bump=seen_bump,
+                refresh_blob=cached_msgids is not None
+                and cached_msgids != thread_msgids,
             )
             conn.close()
             result['counts_updated'] = True

@@ -15,6 +15,8 @@ import pytest
 
 pytest.importorskip('textual')
 
+import liblore.utils
+
 import b4
 import b4.review
 import liblore
@@ -32,6 +34,7 @@ from .helpers.mail import (
     AUTHOR,
     MINIMAL_DIFF,
     followup_thread,
+    make_msg,
     series_msgs,
 )
 from .helpers.tracking import add_worktree, create_review_branch, make_tracking_data
@@ -2795,6 +2798,11 @@ def _make_legacy_v8_db(identifier: str) -> str:
     conn.executescript(
         """
         CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+        CREATE TABLE series (
+            track_id  INTEGER PRIMARY KEY,
+            change_id TEXT NOT NULL,
+            revision  INTEGER NOT NULL
+        );
         CREATE TABLE revisions (
             change_id   TEXT NOT NULL,
             revision    INTEGER NOT NULL,
@@ -3566,6 +3574,11 @@ def _make_legacy_v9_db(identifier: str) -> str:
     conn.executescript(
         """
         CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+        CREATE TABLE series (
+            track_id  INTEGER PRIMARY KEY,
+            change_id TEXT NOT NULL,
+            revision  INTEGER NOT NULL
+        );
         CREATE TABLE revisions (
             change_id   TEXT NOT NULL,
             revision    INTEGER NOT NULL,
@@ -4897,6 +4910,155 @@ class TestUpdateSkipsCheckedOutBranch:
 
         assert result.get('checked_out') is None
         assert result.get('error') == 'Could not find series v1 in retrieved messages'
+
+
+class TestThreadCacheOnCheckedOutBranch:
+    """The cached thread never rewrites a checked-out branch, and catches up later.
+
+    The review TUI reads the cached thread instead of asking lore, so a
+    write skipped while the branch was checked out must still happen once
+    it no longer is, even if no new message has arrived since.
+    """
+
+    IDENT = 'thread-cache-test'
+
+    def _update(self, gitdir: str, change_id: str, msgs: List[EmailMessage]) -> None:
+        series = {
+            'change_id': change_id,
+            'revision': 1,
+            'status': 'accepted',
+            'message_id': f'{change_id}-v1-p0@example.com',
+        }
+        with (
+            mock.patch('b4.review._review.retrieve_series_messages', return_value=msgs),
+            mock.patch('b4.review._review.check_series_attestation', return_value=None),
+        ):
+            b4.review.update_series_tracking(
+                series, self.IDENT, 'https://example.com/%s', topdir=gitdir
+            )
+
+    def _cached_msgids(self, gitdir: str, branch: str) -> List[str]:
+        _cover, tracking = b4.review.load_tracking(gitdir, branch)
+        mbox = review_tracking.get_thread_mbox(
+            gitdir, tracking['series']['thread-blob']
+        )
+        assert mbox is not None
+        return sorted(
+            str(b4.LoreMessage.get_clean_msgid(m))
+            for m in liblore.utils.split_mbox(mbox)
+        )
+
+    def test_checked_out_branch_keeps_its_tip_and_catches_up(self, gitdir: str) -> None:
+        change_id = 'thread-cache'
+        msgs = series_msgs(change_id, AUTHOR, 1, 2, cover=True)
+        conn = review_tracking.init_db(self.IDENT)
+        review_tracking.add_series_to_db(
+            conn,
+            change_id,
+            1,
+            'Test',
+            'Author',
+            'author@example.com',
+            '2026-03-19T00:00:00+00:00',
+            f'{change_id}-v1-p0@example.com',
+            2,
+        )
+        conn.close()
+        branch = create_review_branch(
+            gitdir, change_id, tracking_data=make_tracking_data(change_id)
+        )
+        self._update(gitdir, change_id, msgs[:2])
+        assert len(self._cached_msgids(gitdir, branch)) == 2
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch])
+        assert ecode == 0
+        tip = b4.git_revparse_obj(branch, gitdir)
+        self._update(gitdir, change_id, msgs)
+        assert b4.git_revparse_obj(branch, gitdir) == tip
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', 'master'])
+        assert ecode == 0
+        self._update(gitdir, change_id, msgs)
+        assert len(self._cached_msgids(gitdir, branch)) == 3
+
+
+class TestOwnRepliesAreCountedReadOnce:
+    """A reply the maintainer sent never hides a later reply from someone else.
+
+    The maintainer's own messages count as read when they first show up in
+    the thread. That must happen once per message, however many updates
+    see it, or the unread badge stays dark for the next real reply. A
+    checked-out review branch matters here because its cached thread is
+    not refreshed, so it cannot tell which messages an update already saw.
+    """
+
+    IDENT = 'own-replies-test'
+    ME = 'maint@example.com'
+
+    def _update(self, gitdir: str, change_id: str, msgs: List[EmailMessage]) -> None:
+        series = {
+            'change_id': change_id,
+            'revision': 1,
+            'status': 'reviewing',
+            'message_id': f'{change_id}-v1-p0@example.com',
+        }
+        with (
+            mock.patch('b4.review._review.retrieve_series_messages', return_value=msgs),
+            mock.patch('b4.review._review.check_series_attestation', return_value=None),
+            mock.patch('b4.get_mailfrom', return_value=('Maint', self.ME)),
+        ):
+            b4.review.update_series_tracking(
+                series, self.IDENT, 'https://example.com/%s', topdir=gitdir
+            )
+
+    def _unread(self, change_id: str) -> int:
+        conn = review_tracking.get_db(self.IDENT)
+        row = conn.execute(
+            'SELECT message_count, seen_message_count FROM series WHERE change_id = ?',
+            (change_id,),
+        ).fetchone()
+        conn.close()
+        return int(row['message_count'] - row['seen_message_count'])
+
+    @pytest.mark.parametrize('checked_out', [False, True])
+    def test_reply_after_own_reply_is_unread(
+        self, gitdir: str, checked_out: bool
+    ) -> None:
+        change_id = 'own-replies'
+        root = f'{change_id}-v1-p0@example.com'
+        msgs = series_msgs(change_id, AUTHOR, 1, 2, cover=True)
+        mine = make_msg(
+            'mine@example.com',
+            'Re: v1',
+            from_addr=f'Maint <{self.ME}>',
+            in_reply_to=root,
+        )
+        theirs = make_msg('theirs@example.com', 'Re: v1', in_reply_to=root)
+        conn = review_tracking.init_db(self.IDENT)
+        review_tracking.add_series_to_db(
+            conn,
+            change_id,
+            1,
+            'Test',
+            'Author',
+            'author@example.com',
+            '2026-03-19T00:00:00+00:00',
+            root,
+            2,
+        )
+        conn.close()
+        branch = create_review_branch(
+            gitdir, change_id, tracking_data=make_tracking_data(change_id)
+        )
+        self._update(gitdir, change_id, msgs)
+        if checked_out:
+            ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch])
+            assert ecode == 0
+
+        self._update(gitdir, change_id, msgs + [mine])
+        assert self._unread(change_id) == 0
+        self._update(gitdir, change_id, msgs + [mine, theirs])
+        assert self._unread(change_id) == 1
 
 
 class TestAutoWakeSkipsCheckedOutBranch:
