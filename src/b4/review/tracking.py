@@ -2839,6 +2839,33 @@ def _get_followup_depth_local(
     return min(depth, max_depth)
 
 
+def _chain_has_additional_patch(
+    in_reply_to: Optional[str],
+    patch_msgids: Dict[str, int],
+    msgid_map: Dict[str, Any],
+) -> bool:
+    """Check whether the in-reply-to chain passes through a message that
+    contains its own diff before reaching a known series patch.
+
+    Such a message is an additional patch posted as a follow-up.
+    Replies to it discuss that new code, so their quoted diffs should not
+    be treated as inline reviews of the original series patch.
+    """
+    seen: Set[str] = set()
+    current = in_reply_to
+    while current and current not in seen:
+        if current in patch_msgids:
+            return False
+        seen.add(current)
+        lmsg = msgid_map.get(current)
+        if lmsg is None:
+            break
+        if lmsg.has_diff:
+            return True
+        current = lmsg.in_reply_to
+    return False
+
+
 def _parse_msgs_to_followup_comments(
     msgs: List[Any],
     cover_msgid: Optional[str],
@@ -2898,6 +2925,9 @@ def _parse_msgs_to_followup_comments(
             'msgid': lmsg.msgid,
             'subject': lmsg.subject,
             'depth': _get_followup_depth_local(
+                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+            ),
+            'replies-to-diff': _chain_has_additional_patch(
                 lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
             ),
         }

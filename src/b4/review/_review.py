@@ -1965,6 +1965,76 @@ def _integrate_sashiko_reviews(
     return True
 
 
+def _apply_followup_inline_comments(
+    topdir: str,
+    commit_shas: List[str],
+    patches: List[Dict[str, Any]],
+    followup_comments: Dict[int, List[Dict[str, Any]]],
+) -> int:
+    """Store inline comments quoted in follow-ups under each sender's review.
+
+    Follow-ups that quote patch diff content are converted into positioned
+    comments, resolved against the real diff of the patch they are filed
+    under.  Returns the number of comments stored; the caller saves them.
+    """
+    integrated = 0
+    for display_idx, fc_list in followup_comments.items():
+        # display_idx 0 = cover letter (skip), 1..N = patches
+        if display_idx < 1:
+            continue
+        idx = display_idx - 1
+        if idx >= len(patches) or idx >= len(commit_shas):
+            continue
+
+        patch = patches[idx]
+
+        for fc in fc_list:
+            body = fc.get('body', '')
+            if not body:
+                continue
+            # Only process follow-ups that quote diff content
+            if '> diff --git ' not in body and '> @@ ' not in body:
+                continue
+            # A reply to an additional patch posted in the thread quotes
+            # that patch's diff, not ours.
+            if fc.get('replies-to-diff'):
+                continue
+
+            reviewer_email = fc.get('fromemail', '')
+            if not reviewer_email:
+                continue
+
+            # Skip if we already integrated this exact follow-up message
+            fc_msgid = fc.get('msgid', '')
+            existing_entry = patch.get('reviews', {}).get(reviewer_email, {})
+            if fc_msgid and existing_entry.get('followup-msgid') == fc_msgid:
+                continue
+
+            comments = _extract_comments_from_quoted_reply(body)
+            if not comments:
+                continue
+
+            sha = commit_shas[idx]
+            ecode, real_diff = b4.git_run_command(
+                topdir, ['diff', f'{sha}~1', sha, '--']
+            )
+            if ecode == 0:
+                _resolve_comment_positions(real_diff, comments)
+
+            # Store under the follow-up author's identity
+            reviewer_name = fc.get('fromname', '')
+            patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})
+            entry = patch_reviews.setdefault(reviewer_email, {})
+            if reviewer_name:
+                entry['name'] = reviewer_name
+            entry['comments'] = comments
+            if fc_msgid:
+                entry['followup-msgid'] = fc_msgid
+                entry['provenance'] = f'{b4.LINKADDR}/{fc_msgid}'
+            integrated += len(comments)
+    return integrated
+
+
 def _integrate_followup_inline_comments(
     topdir: str,
     cover_text: str,
@@ -1996,60 +2066,9 @@ def _integrate_followup_inline_comments(
         liblore.utils.split_mbox(mbox_bytes), cover_msgid, patches
     )
 
-    integrated = 0
-
-    for display_idx, fc_list in followup_comments.items():
-        # display_idx 0 = cover letter (skip), 1..N = patches
-        if display_idx < 1:
-            continue
-        idx = display_idx - 1
-        if idx >= len(patches) or idx >= len(commit_shas):
-            continue
-
-        patch = patches[idx]
-
-        for fc in fc_list:
-            body = fc.get('body', '')
-            if not body:
-                continue
-
-            # Only process follow-ups that quote diff content
-            if '> diff --git ' not in body and '> @@ ' not in body:
-                continue
-
-            reviewer_email = fc.get('fromemail', '')
-            if not reviewer_email:
-                continue
-
-            # Skip if we already integrated this exact follow-up message
-            fc_msgid = fc.get('msgid', '')
-            existing_entry = patch.get('reviews', {}).get(reviewer_email, {})
-            if fc_msgid and existing_entry.get('followup-msgid') == fc_msgid:
-                continue
-
-            comments = _extract_comments_from_quoted_reply(body)
-            if not comments:
-                continue
-
-            # Resolve positions against the real diff
-            sha = commit_shas[idx]
-            ecode, real_diff = b4.git_run_command(
-                topdir, ['diff', f'{sha}~1', sha, '--']
-            )
-            if ecode == 0:
-                _resolve_comment_positions(real_diff, comments)
-
-            # Store under the follow-up author's identity
-            reviewer_name = fc.get('fromname', '')
-            patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})
-            entry = patch_reviews.setdefault(reviewer_email, {})
-            if reviewer_name:
-                entry['name'] = reviewer_name
-            entry['comments'] = comments
-            if fc_msgid:
-                entry['followup-msgid'] = fc_msgid
-                entry['provenance'] = f'{b4.LINKADDR}/{fc_msgid}'
-            integrated += 1
+    integrated = _apply_followup_inline_comments(
+        topdir, commit_shas, patches, followup_comments
+    )
 
     if not integrated:
         return False

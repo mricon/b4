@@ -33,7 +33,6 @@ from b4.review_tui._common import (
     CheckRunnerMixin,
     LoreNodeShutdownMixin,
     SeparatedFooter,
-    _chain_has_additional_patch,
     _fix_ansi_theme,
     _get_followup_depth,
     _has_review_data,
@@ -1969,7 +1968,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
                 ),
                 'lmsg': lmsg,
-                'replies-to-diff': _chain_has_additional_patch(
+                'replies-to-diff': b4.review.tracking._chain_has_additional_patch(
                     lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
                 ),
             }
@@ -2010,70 +2009,15 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         self,
         followup_comments: Dict[int, List[Dict[str, Any]]],
     ) -> int:
-        """Extract inline diff comments from follow-ups into patch reviews.
-
-        Scans follow-up bodies for ``> ``-quoted diff content, extracts
-        positioned comments, resolves them against the real diff, and
-        stores them in ``patches[idx]['reviews']`` so they render inline
-        in the diff view.
+        """Store follow-up inline comments, see _apply_followup_inline_comments().
 
         Returns the number of inline comments integrated.
         """
-        integrated = 0
-        for display_idx, fc_list in followup_comments.items():
-            if display_idx < 1:
-                continue
-            idx = display_idx - 1
-            if idx >= len(self._patches) or idx >= len(self._commit_shas):
-                continue
-
-            patch = self._patches[idx]
-
-            for fc in fc_list:
-                body = fc.get('body', '')
-                if not body:
-                    continue
-                if '> diff --git ' not in body and '> @@ ' not in body:
-                    continue
-                # Skip followups that reply to an additional patch:
-                # quoted diff content is from that patch, not ours.
-                if fc.get('replies-to-diff'):
-                    continue
-
-                reviewer_email = fc.get('fromemail', '')
-                if not reviewer_email:
-                    continue
-
-                fc_msgid = fc.get('msgid', '')
-                existing_entry = patch.get('reviews', {}).get(reviewer_email, {})
-                if fc_msgid and existing_entry.get('followup-msgid') == fc_msgid:
-                    continue
-
-                comments = b4.review._extract_comments_from_quoted_reply(body)
-                if not comments:
-                    continue
-
-                sha = self._commit_shas[idx]
-                ecode, real_diff = b4.git_run_command(
-                    self._topdir, ['diff', f'{sha}~1', sha, '--']
-                )
-                if ecode == 0:
-                    b4.review._resolve_comment_positions(real_diff, comments)
-
-                reviewer_name = fc.get('fromname', '')
-                patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})
-                entry = patch_reviews.setdefault(reviewer_email, {})
-                if reviewer_name:
-                    entry['name'] = reviewer_name
-                entry['comments'] = comments
-                if fc_msgid:
-                    entry['followup-msgid'] = fc_msgid
-                    entry['provenance'] = f'{b4.LINKADDR}/{fc_msgid}'
-                integrated += len(comments)
-
+        integrated = b4.review._apply_followup_inline_comments(
+            self._topdir, self._commit_shas, self._patches, followup_comments
+        )
         if integrated:
             self._save_tracking()
-
         return integrated
 
     def action_followups(self) -> None:

@@ -3,6 +3,7 @@ from b4.review._review import *  # noqa: F403
 from b4.review._review import (
     TRAILER_MENU_NAMES,
     _apply_findings_locations,
+    _apply_followup_inline_comments,
     _build_reply_from_comments,
     _build_review_email,
     _cleanup_review,
@@ -67,6 +68,7 @@ __all__ = [
     '_sync_reply_trailers',
     'TRAILER_MENU_NAMES',
     '_build_review_email',
+    '_apply_followup_inline_comments',
     '_integrate_agent_reviews',
     '_extract_comments_from_quoted_reply',
     '_integrate_sashiko_reviews',

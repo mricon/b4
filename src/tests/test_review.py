@@ -3889,9 +3889,12 @@ class TestIntegrateFollowupInlineComments:
     )
 
     def _make_followup_comments(
-        self, bodies_by_patch: Dict[int, List[str]]
+        self, bodies_by_patch: Dict[int, List[str]], **extra: Any
     ) -> Dict[int, List[Dict[str, Any]]]:
-        """Build a followup_comments dict like _parse_msgs_to_followup_comments returns."""
+        """Build a followup_comments dict like _parse_msgs_to_followup_comments returns.
+
+        *extra* keys are added to every follow-up entry.
+        """
         result: Dict[int, List[Dict[str, Any]]] = {}
         for display_idx, body_list in bodies_by_patch.items():
             entries = []
@@ -3905,6 +3908,7 @@ class TestIntegrateFollowupInlineComments:
                         'msgid': f'followup{display_idx}-{i}@example.com',
                         'subject': 'Re: [PATCH]',
                         'depth': 0,
+                        **extra,
                     }
                 )
             result[display_idx] = entries
@@ -3974,15 +3978,24 @@ class TestIntegrateFollowupInlineComments:
         assert 'NULL check' in rev['comments'][0]['text']
 
     @pytest.mark.parametrize(
-        'bodies_by_patch',
+        'bodies_by_patch,extra',
         [
             # Follow-ups that don't quote diff content are ignored.
-            pytest.param({1: [_FOLLOWUP_BODY_NO_DIFF]}, id='without-diff'),
+            pytest.param({1: [_FOLLOWUP_BODY_NO_DIFF]}, {}, id='without-diff'),
             # Follow-ups to the cover letter (display_idx 0) are skipped.
-            pytest.param({0: [_FOLLOWUP_BODY_WITH_DIFF]}, id='cover-letter'),
+            pytest.param({0: [_FOLLOWUP_BODY_WITH_DIFF]}, {}, id='cover-letter'),
+            # Replies to an additional patch posted in the thread quote that
+            # patch's diff, not the series patch they are filed under.
+            pytest.param(
+                {1: [_FOLLOWUP_BODY_WITH_DIFF]},
+                {'replies-to-diff': True},
+                id='replies-to-additional-patch',
+            ),
         ],
     )
-    def test_skips_followups(self, bodies_by_patch: Dict[int, List[str]]) -> None:
+    def test_skips_followups(
+        self, bodies_by_patch: Dict[int, List[str]], extra: Dict[str, Any]
+    ) -> None:
         patches: List[Dict[str, Any]] = [
             {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
         ]
@@ -3991,7 +4004,7 @@ class TestIntegrateFollowupInlineComments:
             'thread-blob': 'abc123',
         }
         tracking = {'series': series, 'patches': patches}
-        followup_comments = self._make_followup_comments(bodies_by_patch)
+        followup_comments = self._make_followup_comments(bodies_by_patch, **extra)
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
             with mock.patch('liblore.utils.split_mbox', return_value=[]):
@@ -3999,9 +4012,11 @@ class TestIntegrateFollowupInlineComments:
                     'b4.review.tracking._parse_msgs_to_followup_comments',
                     return_value=followup_comments,
                 ):
-                    result = review._integrate_followup_inline_comments(
-                        '/tmp', '', tracking, ['aaa'], patches
-                    )
+                    with mock.patch('b4.git_run_command', return_value=(1, '')):
+                        with mock.patch.object(_review, 'save_tracking'):
+                            result = review._integrate_followup_inline_comments(
+                                '/tmp', '', tracking, ['aaa'], patches
+                            )
         assert result is False
         assert 'reviews' not in patches[0]
 
