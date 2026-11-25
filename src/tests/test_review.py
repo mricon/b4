@@ -4405,11 +4405,70 @@ class TestCollectReviewEmails:
         text = text.replace('> +two\n', '> +two\n\nnew\n')
         new = review._extract_editor_comments(text, diff_text=diff)
         assert [c['text'] for c in new] == ['new']
-        my_review['comments'] = review._merge_sent(my_review, 'comments', new)
+        my_review['comments'] = review._merge_sent_comments(my_review, new)
         assert [c['text'] for c in my_review['comments']] == ['old', 'new']
         to_send = review._review_to_send(my_review)
         assert to_send is not None
         assert [c['text'] for c in to_send['comments']] == ['new']
+
+
+class TestSentCommentsSurviveRebase:
+    """A sent comment must stay sent after a rebase re-anchors it.
+
+    Rebasing the review branch runs reanchor_patch_comments(), which moves
+    comments to their new line in place.  Whatever marks a comment as sent
+    has to survive that, or the comment is offered and sent a second time.
+    """
+
+    MY_EMAIL = 'maintainer@example.com'
+    DIFF = 'diff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1,1 +1,2 @@\n ctx\n+one\n'
+    # The same change, after the base grew two lines above it
+    REBASED_DIFF = (
+        'diff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -3,1 +3,2 @@\n ctx\n+one\n'
+    )
+
+    def _sent_then_rebased(self) -> Dict[str, Any]:
+        """Return a review whose one comment was sent, then re-anchored."""
+        reviews: Dict[str, Dict[str, Any]] = {self.MY_EMAIL: {'name': 'Maintainer'}}
+        text = review._render_quoted_diff_with_comments(
+            self.DIFF, reviews, self.MY_EMAIL
+        )
+        text = text.replace('> +one\n', '> +one\n\nsent comment\n')
+        my_review = reviews[self.MY_EMAIL]
+        my_review['comments'] = review._extract_editor_comments(
+            text, diff_text=self.DIFF
+        )
+        review._mark_review_sent(my_review, 1)
+        before = [c['line'] for c in my_review['comments']]
+        review._resolve_comment_positions(self.REBASED_DIFF, my_review['comments'])
+        # Guard: the scenario only means something if the comment moved
+        assert [c['line'] for c in my_review['comments']] != before
+        return my_review
+
+    def test_not_sent_again(self) -> None:
+        to_send = review._review_to_send(self._sent_then_rebased())
+        assert to_send is not None
+        assert to_send['comments'] == []
+
+    def test_rendered_read_only(self) -> None:
+        """The editor shows it as a read-only | line, not as editable text."""
+        reviews = {self.MY_EMAIL: self._sent_then_rebased()}
+        text = review._render_quoted_diff_with_comments(
+            self.REBASED_DIFF, reviews, self.MY_EMAIL
+        )
+        assert '| sent comment' in text
+        assert '\nsent comment' not in text
+
+    def test_not_duplicated_by_next_edit(self) -> None:
+        """Saving an edit with nothing new keeps exactly one copy."""
+        my_review = self._sent_then_rebased()
+        reviews = {self.MY_EMAIL: my_review}
+        text = review._render_quoted_diff_with_comments(
+            self.REBASED_DIFF, reviews, self.MY_EMAIL
+        )
+        extracted = review._extract_editor_comments(text, diff_text=self.REBASED_DIFF)
+        merged = review._merge_sent_comments(my_review, extracted)
+        assert [c['text'] for c in merged] == ['sent comment']
 
 
 def _cron_args(**kwargs: Any) -> argparse.Namespace:

@@ -6,7 +6,6 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
-import copy
 import datetime
 import email.message
 import email.utils
@@ -2121,10 +2120,9 @@ def _render_quoted_diff_with_comments(
     # External comments: (text, attribution, provenance) — rendered with | prefix.
     entries: List[Tuple[Dict[str, Any], str, str]] = []
     if my_email in all_reviews:
-        sent = all_reviews[my_email].get('sent', {}).get('comments', [])
         for c in all_reviews[my_email].get('comments', []):
             # Already sent: show it read-only so it is not sent again
-            entries.append((c, f'<{my_email}> (sent)' if c in sent else '', ''))
+            entries.append((c, f'<{my_email}> (sent)' if c.get('sent') else '', ''))
     for addr in sorted(all_reviews):
         if addr == my_email:
             continue
@@ -3951,50 +3949,59 @@ def _build_review_email(
 def _review_to_send(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Return what of *review* is left to send, or None if it was sent.
 
-    ``sent`` holds what earlier sends carried, so only the trailers and
-    comments added since are returned; with no ``sent``, the whole review
-    is.  A sent reply is moved out of the review, so any reply left is new.
+    Only the trailers and comments added since the last send are returned;
+    with nothing sent yet, the whole review is.  A sent reply is moved out
+    of the review, so any reply left is new.
     """
     if 'sent' not in review and review.get('sent-revision'):
         # Sent by a b4 that did not record what went out
         return None
-    sent = review.get('sent', {})
+    sent_trailers = review.get('sent', {}).get('trailers', [])
     to_send = dict(review)
     to_send['trailers'] = [
-        t for t in review.get('trailers', []) if t not in sent.get('trailers', [])
+        t for t in review.get('trailers', []) if t not in sent_trailers
     ]
-    to_send['comments'] = [
-        c for c in review.get('comments', []) if c not in sent.get('comments', [])
-    ]
+    to_send['comments'] = [c for c in review.get('comments', []) if not c.get('sent')]
     return to_send
 
 
 def _mark_review_sent(review: Dict[str, Any], revision: int) -> None:
     """Record what a send of *review* carried, see _review_to_send().
 
+    Comments are flagged in place rather than copied aside: re-anchoring
+    after a rebase moves them, and a copy would then no longer match.
     The reply is moved to ``sent``, so that the next edit starts from a
     fresh buffer and does not send the same text again.
     """
     review['sent-revision'] = revision
-    replies = review.get('sent', {}).get('replies', [])
-    replies = replies + [r for r in [review.pop('reply', '')] if r]
-    review['sent'] = copy.deepcopy(
-        {
-            'trailers': review.get('trailers', []),
-            'comments': review.get('comments', []),
-            'replies': replies,
-        }
-    )
+    for c in review.get('comments', []):
+        c['sent'] = True
+    sent = review.setdefault('sent', {})
+    sent['trailers'] = list(review.get('trailers', []))
+    reply = review.pop('reply', '')
+    if reply:
+        sent['replies'] = sent.get('replies', []) + [reply]
 
 
-def _merge_sent(review: Dict[str, Any], key: str, items: List[Any]) -> List[Any]:
-    """Return the sent *key* items of *review* followed by the new *items*.
+def _merge_sent_comments(
+    review: Dict[str, Any], comments: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Return the sent comments of *review* followed by *comments*.
+
+    A reply buffer edited after a send shows sent comments read-only, so
+    they are not in what is extracted from it and must be kept from here.
+    """
+    return [c for c in review.get('comments', []) if c.get('sent')] + comments
+
+
+def _merge_sent_trailers(review: Dict[str, Any], trailers: List[str]) -> List[str]:
+    """Return the sent trailers of *review* followed by the new *trailers*.
 
     A reply buffer edited after a send only holds what is new, so this
-    keeps the sent trailers or comments in the review.
+    keeps the sent trailers in the review.
     """
-    sent: List[Any] = review.get('sent', {}).get(key, [])
-    return sent + [i for i in items if i not in sent]
+    sent: List[str] = review.get('sent', {}).get('trailers', [])
+    return sent + [t for t in trailers if t not in sent]
 
 
 def collect_review_emails(

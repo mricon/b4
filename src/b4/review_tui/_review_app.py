@@ -1207,8 +1207,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     reply_text, result, self._default_identity
                 )
                 review['reply'] = reply_text
-                trailers_now = b4.review._merge_sent(
-                    review, 'trailers', b4.review._parse_reply_trailers(reply_text)
+                trailers_now = b4.review._merge_sent_trailers(
+                    review, b4.review._parse_reply_trailers(reply_text)
                 )
                 if trailers_now:
                     review['trailers'] = trailers_now
@@ -1416,9 +1416,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         #
         # _extract_editor_comments strips | lines (unadopted external
         # comments) before parsing, so only adopted ones are kept.
-        new_comments = b4.review._merge_sent(
+        new_comments = b4.review._merge_sent_comments(
             review,
-            'comments',
             b4.review._extract_editor_comments(
                 reply_text,
                 diff_text=real_diff,
@@ -1431,8 +1430,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         else:
             review.pop('comments', None)
 
-        trailer_strs = b4.review._merge_sent(
-            review, 'trailers', b4.review._parse_reply_trailers(reply_text)
+        trailer_strs = b4.review._merge_sent_trailers(
+            review, b4.review._parse_reply_trailers(reply_text)
         )
         if trailer_strs:
             review['trailers'] = trailer_strs
