@@ -33,6 +33,24 @@ def current_screen(app: Any) -> Any:
     return app.screen
 
 
+async def settle_tracking_app(app: Any, pilot: Any) -> None:
+    """Wait for TrackingApp to finish its startup work.
+
+    on_mount() starts a ``_startup_rescan`` worker thread. When that worker
+    finds a changed branch, it replaces ``#tracking-list`` with a rebuilt
+    one. A plain ``pilot.pause()`` decides the app is idle by watching CPU
+    time, and a thread blocked on ``git`` uses none, so the test can see
+    the old list or no list at all. This waits for the worker itself.
+    """
+    await app.workers.wait_for_complete()
+    # The first pause runs the worker's StateChanged handler. That handler
+    # only queues _refresh_list with call_later(), so the second pause is
+    # what makes sure the rebuild has run, without relying on the idle
+    # heuristic.
+    await pilot.pause()
+    await pilot.pause()
+
+
 # A reply buffer exercising every trim rule the send paths share: the
 # instruction header is dropped, everything quoted above the >--cut--
 # marker collapses into a "lines skipped" note, and a trailing quoted run
