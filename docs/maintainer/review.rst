@@ -127,6 +127,8 @@ Status         Meaning
 ``partial``    Some patches applied; remainder still under review
 ``accepted``   All patches applied to the target branch
 ``thanked``    Thank-you note sent to the contributor
+``landed``     Every patch is already in a checked remote (shown, never
+               stored; see :ref:`review_landed`)
 ``archived``   Review completed and archived
 ``gone``       Review branch deleted or missing (e.g. after a sync)
 =============  =========================================================
@@ -174,6 +176,7 @@ Symbol   Status
 ``◐``    partial
 ``∈``    accepted
 ``✓``    thanked
+``↓``    landed
 ``∅``    gone
 =======  =============
 
@@ -198,7 +201,8 @@ Key           Action
               mid-run — series already updated are saved
 ``l``         Limit — filter the list of displayed series. Plain text
               matches subjects and submitters; ``s:<status>`` filters
-              by status, ``t:<target-branch>`` by target branch, and
+              by status (``s:landed`` included), ``t:<target-branch>``
+              by target branch, and
               ``up:`` shows only series with an upgrade available
               (``up:no`` inverts). Multiple tokens combine with AND
 ``s``         Shell — suspend to an interactive sub-shell
@@ -785,6 +789,7 @@ External    ``±``   —       External reviewers have inline comments (auto)
 Draft       ``✎``   —       You have comments, a reply, or a nack trailer (auto)
 Done        ``✓``   ``d``   Review complete, include in outgoing emails (also auto)
 Skip        ``✕``   ``x``   Intentionally skipped; any replies are still sent
+Landed      ``↓``   —       Already in a checked remote; handled like skip (auto)
 ==========  ======  ======  =======================================================
 
 .. |sp| unicode:: U+0020
@@ -808,9 +813,9 @@ you sent) takes precedence over it.
 
 Pressing ``d`` or ``x`` toggles the state for the current patch. The
 patch list on the left shows the state visually: done patches appear in
-bold, skipped and unchanged patches appear dimmed. Press ``H`` to hide
-skipped patches from the list — useful for large series where many
-patches are irrelevant to your review.
+bold, skipped, landed and unchanged patches appear dimmed. Press ``H`` to
+hide skipped and landed patches from the list — useful for large series
+where many patches are irrelevant to your review.
 
 Skipping a patch keeps it out of a take, not out of the conversation:
 any unsent replies, comments, or trailers on skipped patches are still
@@ -820,8 +825,8 @@ skipped patches with something left to send in the list, and the send
 confirmation marks their emails as ``(skipped)``. To hold back a draft
 on a skipped patch, delete the draft.
 
-When taking patches via cherry-pick, skipped patches are pre-deselected
-in the patch selection dialog.
+When taking patches via cherry-pick, skipped and landed patches are
+pre-deselected in the patch selection dialog.
 
 **Follow-up messages**
 
@@ -909,7 +914,9 @@ is known, b4 lets you know in several ways: the row gets an ``↑``
 suffix flag in the tracking list, the Revisions line in the details
 panel shows *(vN available — upgrade with [a]ction)*, a ``waiting``
 series surfaces back into the Active group, and the ``up:`` limit
-token can filter the list down to just the upgradable series.
+token can filter the list down to just the upgradable series. Updating
+also checks which patches have landed elsewhere (see
+:ref:`review_landed`).
 
 Upgrading itself is always an explicit action: open the action menu
 (``a``) and select **Upgrade**. Availability depends only on a newer
@@ -931,6 +938,72 @@ without touching git.
 Comments on patches that were modified between revisions are not carried
 over, since those patches need fresh review. Cover letter reviews are
 also not carried over, as they are specific to the previous revision.
+
+.. _review_landed:
+
+Patches that landed elsewhere
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+A series that touches several subsystems is often taken in parts: each
+maintainer applies the patches for their own tree. b4 can recognize the
+patches that are already in a tree you follow, so you do not review or
+take them again. List the remotes to check in
+:term:`b4.review-check-landed` — for kernel work, a ``linux-next``
+remote covers most subsystem trees at once.
+
+Each update (``u``, ``U`` or ``b4 review cron``) reads the
+remote-tracking branches of those remotes. b4 never fetches for this:
+run ``git fetch`` yourself to bring them up to date. A patch counts as
+landed only on exact evidence, because landed patches are taken out of
+review without you looking at them:
+
+* a commit with a ``Link:`` or ``Message-ID:`` trailer naming the
+  posted patch, as ``b4 am -l`` and ``b4 am -i`` add, even if the
+  maintainer edited the patch; or
+* a commit with the same subject and exactly the same diff.
+
+A commit that only has the same subject does not count. Such a patch
+stays up for review, which is safe: a wrong match would hide a patch
+from you.
+
+Landed patches get the ``↓`` marker in the review interface and are
+handled like skipped ones: ``H`` hides them, a cherry-pick take leaves
+them out, and review agents are told not to review them. Anything you
+did to a patch yourself — a state, a comment, a reply — wins over
+landed, so landed never hides your own work.
+
+A landed patch is in one of the checked remotes, which does not mean
+that it is in the branch you apply to. If the patches you take depend
+on a landed one that your branch does not have yet, select it again in
+the patch selection dialog, or take the rest once your branch has it.
+
+What has landed depends on the remotes of the repository you work in,
+so b4 keeps it in its local database and not in the tracking commit:
+a review branch you sync to another machine does not carry it along.
+Scripts and review agents can ask for the landed patches of a review
+branch with ``b4 review show-info <branch>:landed-patches``, which
+prints their numbers separated by spaces.
+
+When every patch of a series has landed, the tracking list shows the
+series as ``↓`` landed and sorts it with the inactive series; you can
+then archive it. The details panel lists the landed patches of partly
+landed series. Landed is a display state and is never stored: it only
+replaces new, reviewing, replied and waiting, so a series you already
+took keeps its accepted, partial, queued or thanked status.
+
+A landed series must have nothing left for you to do, so a series
+keeps its own status and place in the list, even when every patch has
+landed, if:
+
+* a newer revision of it is known, because that revision has not
+  landed and may need your attention; or
+* you have anything unsent on its review branch: comments, a reply or
+  a trailer. Send or delete them and the series shows as landed.
+
+The details panel still lists the landed patches of such a series.
+
+The check is repeated on every update, so a patch that drops out of a
+remote again (linux-next is rebuilt daily) is no longer landed. If the
+remotes cannot be read, the previous result is kept.
 
 .. _review_link_revision:
 
@@ -1543,8 +1616,10 @@ Optional flags
 ``--status STATUS``
   Only list series with this status; may be given multiple times. One of
   ``new``, ``reviewing``, ``replied``, ``waiting``, ``accepted``,
-  ``partial``, ``queued``, ``snoozed``, ``thanked``, ``gone``,
+  ``partial``, ``queued``, ``snoozed``, ``thanked``, ``landed``, ``gone``,
   ``archived``, or ``all``. Defaults to everything except ``archived``.
+  ``landed`` lists the series the tracking list shows as landed (see
+  :ref:`review_landed`); they also match their stored status.
 
 ``-j, --json``
   Output a JSON array instead of the human-readable listing. See
@@ -1585,7 +1660,9 @@ Optional flags
 ~~~~~~~~~~~~~~~~~~~~~~~
 Displays review branch metadata in a format suitable for scripting
 and CI integration. The output includes change-id, revision, status,
-commit SHAs, and other tracking data.
+commit SHAs, and other tracking data. The ``landed-patches`` key lists
+the numbers of the patches that have already landed elsewhere (see
+:ref:`review_landed`).
 
 ``PARAM``
   Optional parameter in the form ``[branch:]key``. The parameter can

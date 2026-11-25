@@ -848,6 +848,36 @@ These settings control ``b4 review`` TUI behaviour.
 
      .. versionadded:: v0.15
 
+   :term:`b4.review-check-landed`
+     Remotes to check for patches that have already landed — for
+     example, patches from a multi-subsystem series that another
+     maintainer took. Name remotes you already have, such as a
+     ``linux-next`` remote::
+
+         git config --add b4.review-check-landed linux-next
+         git config --add b4.review-check-landed net-next
+
+     When you update tracked series (``u``, ``U`` or ``b4 review
+     cron``), b4 reads the remote-tracking branches of these remotes
+     and marks the patches it finds there as landed. b4 never fetches
+     for this, so the result is only as fresh as your last ``git
+     fetch``. Names that are not remotes in the repository are
+     reported and ignored.
+
+     Every branch of a listed remote counts, not only its main one. Only
+     list remotes where a patch on any branch means that somebody took
+     it: a shared tree that also carries testing or work-in-progress
+     branches would mark the patches on those as landed, too.
+
+     This option supports multiple values. It is only read from your
+     own git configuration, never from a ``.b4-config`` file. See
+     :ref:`review_landed` for how patches are matched and what landed
+     patches look like.
+
+     Default: ``None``
+
+     .. versionadded:: v0.17
+
    :term:`b4.review-apply-base`
      The base commit to pre-fill in the base selection dialog shown
      when starting a review or upgrading a tracked series to a newer
