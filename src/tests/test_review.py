@@ -4231,24 +4231,19 @@ class TestGetLoreSeriesVersionMismatch:
 # -- Tests for collect_review_emails() ----------------------------------------
 
 
-def _fake_review_email(_series: Any, _patch: Any, rev: Dict[str, Any], *_: Any) -> Any:
-    """Stand in for _build_review_email(), keeping its filtering of what was sent."""
-    to_send = review._review_to_send(rev)
-    if to_send and (to_send['trailers'] or to_send['comments']):
-        return mock.sentinel.email_msg
-    return None
-
-
-@mock.patch('b4.review._review._build_review_email', side_effect=_fake_review_email)
+@mock.patch(
+    'b4.review._review._build_review_email', return_value=mock.sentinel.email_msg
+)
 @mock.patch(
     'b4.get_user_config',
     return_value={'name': 'Maintainer', 'email': 'maintainer@example.com'},
 )
 class TestCollectReviewEmails:
-    """Tests for collect_review_emails() filtering logic.
+    """Tests for which reviews collect_review_emails() builds emails from.
 
-    Covers the sent-revision safety-net filter added to fix the bug where
-    reviews carried over from a prior revision were re-sent for the new one.
+    What is left to send in each review is _build_review_email()'s job (see
+    TestReviewToSend); this only covers skipping and pairing each email with
+    the review it came from, which is what gets recorded as sent.
     """
 
     MY_EMAIL = 'maintainer@example.com'
@@ -4284,10 +4279,10 @@ class TestCollectReviewEmails:
         return r
 
     def _collect(
-        self, on_cover: bool, review_extra: Dict[str, Any]
+        self, on_cover: bool, my_review: Dict[str, Any]
     ) -> List[Tuple[Dict[str, Any], email.message.EmailMessage]]:
         """Collect emails for a single review attached to the cover or a patch."""
-        reviews = {self.MY_EMAIL: self._review(**review_extra)}
+        reviews = {self.MY_EMAIL: my_review}
         if on_cover:
             series = self._make_series(reviews)
             return review.collect_review_emails(series, [], 'cover', '', [])
@@ -4298,30 +4293,25 @@ class TestCollectReviewEmails:
     @pytest.mark.parametrize(
         'on_cover',
         [
-            # A review without sent-revision produces one email.
-            pytest.param(True, id='normal-cover-review'),
-            pytest.param(False, id='normal-patch-review'),
+            pytest.param(True, id='cover-review'),
+            pytest.param(False, id='patch-review'),
         ],
     )
-    def test_sends_unsent_review(
+    def test_pairs_email_with_its_review(
         self, _cfg: mock.Mock, _build: mock.Mock, on_cover: bool
     ) -> None:
-        msgs = self._collect(on_cover, {})
+        my_review = self._review()
+        msgs = self._collect(on_cover, my_review)
         assert len(msgs) == 1
+        assert msgs[0][0] is my_review
+        assert msgs[0][1] is mock.sentinel.email_msg
 
     @pytest.mark.parametrize(
-        'on_cover,review_extra',
+        'review_extra',
         [
-            # Reviews stamped with sent-revision are not re-sent.
-            pytest.param(True, {'sent-revision': 1}, id='cover-with-sent-revision'),
-            pytest.param(False, {'sent-revision': 1}, id='patch-with-sent-revision'),
             # The upgrade step sets patch-state=skip AND skip-reason on
-            # unchanged patches whose review was already sent (combo A+B
-            # fix).  Both the skip filter and the sent-revision filter
-            # independently prevent re-sending; this row exercises the
-            # skip-state path.
+            # unchanged patches whose review was already sent.
             pytest.param(
-                False,
                 {
                     'sent-revision': 1,
                     'patch-state': 'skip',
@@ -4330,86 +4320,174 @@ class TestCollectReviewEmails:
                 id='patch-auto-skipped-after-upgrade',
             ),
             # Explicit skip state (manually set, no sent-revision) is honoured.
+            pytest.param({'patch-state': 'skip'}, id='skip-state-without-sent'),
+        ],
+    )
+    def test_skipped_review_not_built(
+        self, _cfg: mock.Mock, _build: mock.Mock, review_extra: Dict[str, Any]
+    ) -> None:
+        assert self._collect(False, self._review(**review_extra)) == []
+        _build.assert_not_called()
+
+    def test_review_with_nothing_to_send_left_out(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
+        """A review the builder returns nothing for is not paired, so it is
+        not recorded as sent either."""
+        _build.side_effect = [None, mock.sentinel.email_msg]
+        series = self._make_series()
+        empty = self._review()
+        fresh = self._review()
+        patches = [
+            self._make_patch({self.MY_EMAIL: empty}),
+            self._make_patch({self.MY_EMAIL: fresh}),
+        ]
+        msgs = review.collect_review_emails(
+            series, patches, 'cover', '', ['sha1', 'sha2']
+        )
+        assert len(msgs) == 1
+        assert msgs[0][0] is fresh
+
+
+class TestReviewToSend:
+    """_review_to_send() returns only what was added since the last send."""
+
+    T1 = 'Reviewed-by: Me <me@example.com>'
+    T2 = 'Tested-by: Me <me@example.com>'
+    C1 = {'path': 'b/a.c', 'line': 1, 'text': 'one'}
+    C1_SENT = {'path': 'b/a.c', 'line': 1, 'text': 'one', 'sent': True}
+    C2 = {'path': 'b/a.c', 'line': 2, 'text': 'two'}
+    AFTER_SEND = {'sent-revision': 1, 'sent': {'trailers': [T1]}}
+
+    @pytest.mark.parametrize(
+        'my_review,expected',
+        [
             pytest.param(
-                False,
-                {'patch-state': 'skip'},
-                id='skip-state-without-sent-revision',
+                {'trailers': [T1], 'comments': [C1]},
+                ([T1], [C1]),
+                id='never-sent-sends-all',
+            ),
+            # Sent by a b4 that did not record what went out: unknown, so
+            # nothing is resent.
+            pytest.param(
+                {'sent-revision': 1, 'trailers': [T1], 'comments': [C1]},
+                None,
+                id='older-b4-send-skipped',
+            ),
+            pytest.param(
+                {**AFTER_SEND, 'trailers': [T1], 'comments': [C1_SENT]},
+                ([], []),
+                id='nothing-new',
+            ),
+            pytest.param(
+                {**AFTER_SEND, 'trailers': [T1], 'comments': [C1_SENT, C2]},
+                ([], [C2]),
+                id='new-comment-only',
+            ),
+            pytest.param(
+                {**AFTER_SEND, 'trailers': [T1, T2], 'comments': [C1_SENT]},
+                ([T2], []),
+                id='new-trailer-only',
             ),
         ],
     )
-    def test_skips_already_sent_or_skipped(
+    def test_left_to_send(
         self,
-        _cfg: mock.Mock,
-        _build: mock.Mock,
-        on_cover: bool,
-        review_extra: Dict[str, Any],
+        my_review: Dict[str, Any],
+        expected: Optional[Tuple[List[str], List[Dict[str, Any]]]],
     ) -> None:
-        assert self._collect(on_cover, review_extra) == []
-
-    def test_only_unsent_patches_included(
-        self, _cfg: mock.Mock, _build: mock.Mock
-    ) -> None:
-        """Mix of sent and unsent patches: only unsent ones produce emails."""
-        series = self._make_series()
-        sent_patch = self._make_patch(
-            {self.MY_EMAIL: self._review(**{'sent-revision': 1})}
-        )
-        fresh_patch = self._make_patch({self.MY_EMAIL: self._review()})
-        msgs = review.collect_review_emails(
-            series, [sent_patch, fresh_patch], 'cover', '', ['sha1', 'sha2']
-        )
-        assert len(msgs) == 1
-
-    def test_sends_only_comments_added_after_send(
-        self, _cfg: mock.Mock, _build: mock.Mock
-    ) -> None:
-        """A comment added after a send goes out alone in a second email."""
-        old = {'path': 'a.c', 'line': 1, 'text': 'old'}
-        new = {'path': 'a.c', 'line': 2, 'text': 'new'}
-        my_review = self._review(comments=[old])
-        review._mark_review_sent(my_review, 1)
-        series = self._make_series()
-        patch = self._make_patch({self.MY_EMAIL: my_review})
-        assert (
-            review.collect_review_emails(series, [patch], 'cover', '', ['sha1']) == []
-        )
-        my_review['comments'].append(new)
-        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
-        assert len(msgs) == 1
         to_send = review._review_to_send(my_review)
-        assert to_send is not None
-        assert to_send['comments'] == [new]
-        assert to_send['trailers'] == []
+        if expected is None:
+            assert to_send is None
+        else:
+            assert to_send is not None
+            assert (to_send['trailers'], to_send['comments']) == expected
 
-    def test_reply_edited_after_send_carries_only_new_text(
-        self, _cfg: mock.Mock, _build: mock.Mock
-    ) -> None:
-        """A sent reply is not sent again when the buffer is edited later."""
-        diff = (
-            'diff --git a/a.c b/a.c\n'
-            '--- a/a.c\n'
-            '+++ b/a.c\n'
-            '@@ -1,2 +1,2 @@\n'
-            '+one\n'
-            '+two\n'
-        )
-        old = {'path': 'b/a.c', 'line': 1, 'text': 'old'}
-        my_review = self._review(comments=[old], reply='> +one\n\nold\n')
+    def test_mark_keeps_every_sent_reply(self) -> None:
+        """Each send's reply is kept, so the prior review context shows
+        them all and the next edit starts from a fresh buffer."""
+        my_review: Dict[str, Any] = {'reply': 'first\n'}
+        review._mark_review_sent(my_review, 1)
+        my_review['reply'] = 'second\n'
         review._mark_review_sent(my_review, 1)
         assert 'reply' not in my_review
-        assert my_review['sent']['replies'] == ['> +one\n\nold\n']
+        assert my_review['sent']['replies'] == ['first\n', 'second\n']
+
+
+@mock.patch('b4.get_email_signature', return_value='sig')
+@mock.patch(
+    'b4.get_user_config',
+    return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+)
+class TestBuildReviewEmailAfterSend:
+    """What actually goes out once a review was sent before."""
+
+    MY_EMAIL = 'reviewer@example.com'
+    DIFF = 'diff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1,2 +1,2 @@\n+one\n+two\n'
+
+    @staticmethod
+    def _body(msg: Optional[email.message.EmailMessage]) -> str:
+        assert msg is not None
+        raw = msg.get_payload(decode=True)
+        assert isinstance(raw, bytes)
+        return raw.decode()
+
+    def test_nothing_new_sends_nothing(self, _cfg: mock.Mock, _sig: mock.Mock) -> None:
+        my_review = {
+            'reply': 'Looks good.\n',
+            'trailers': ['Reviewed-by: Reviewer <reviewer@example.com>'],
+        }
+        review._mark_review_sent(my_review, 1)
+        series = TestBuildReviewEmailReplyPath._series()
+        assert review._build_review_email(series, None, my_review, '', '', None) is None
+
+    def test_follow_up_reply_carries_only_new_comment(
+        self, _cfg: mock.Mock, _sig: mock.Mock
+    ) -> None:
+        """A sent comment shows read-only in the follow-up buffer, so the
+        email built from that buffer holds only the new comment."""
+        old = {'path': 'b/a.c', 'line': 1, 'text': 'old remark'}
+        my_review = {'comments': [old], 'reply': '> +one\n\nold remark\n'}
+        review._mark_review_sent(my_review, 1)
 
         reviews = {self.MY_EMAIL: my_review}
-        text = review._render_quoted_diff_with_comments(diff, reviews, self.MY_EMAIL)
-        assert '| old' in text
-        text = text.replace('> +two\n', '> +two\n\nnew\n')
-        new = review._extract_editor_comments(text, diff_text=diff)
-        assert [c['text'] for c in new] == ['new']
+        text = review._render_quoted_diff_with_comments(
+            self.DIFF, reviews, self.MY_EMAIL
+        )
+        text = text.replace('> +two\n', '> +two\n\nnew remark\n')
+        my_review['reply'] = text
+        new = review._extract_editor_comments(text, diff_text=self.DIFF)
         my_review['comments'] = review._merge_sent_comments(my_review, new)
-        assert [c['text'] for c in my_review['comments']] == ['old', 'new']
-        to_send = review._review_to_send(my_review)
-        assert to_send is not None
-        assert [c['text'] for c in to_send['comments']] == ['new']
+
+        series = TestBuildReviewEmailReplyPath._series()
+        body = self._body(
+            review._build_review_email(series, None, my_review, '', '', None)
+        )
+        assert 'new remark' in body
+        assert 'old remark' not in body
+
+
+class TestRenderPriorReviewContext:
+    """The prior review context shows every reply I sent, not just the last."""
+
+    @pytest.mark.parametrize(
+        'my_review,expected',
+        [
+            pytest.param({'reply': 'draft'}, 'draft', id='unsent-reply'),
+            pytest.param({'sent': {'replies': ['first\n']}}, 'first', id='sent-reply'),
+            pytest.param(
+                {'sent': {'replies': ['first\n', 'second\n']}, 'reply': 'third'},
+                'first\n\nsecond\n\nthird',
+                id='sent-replies-then-draft',
+            ),
+        ],
+    )
+    def test_public_reply(self, my_review: Dict[str, Any], expected: str) -> None:
+        series = {'subject': 'cover', 'reviews': {'me@example.com': my_review}}
+        text = b4.review.tracking.render_prior_review_context(
+            'me@example.com', 1, series, []
+        )
+        assert f'Public reply:\n{expected}\n' in text
 
 
 class TestSentCommentsSurviveRebase:
