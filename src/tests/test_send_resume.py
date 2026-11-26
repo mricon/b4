@@ -133,6 +133,31 @@ def test_partial_recipient_acceptance(session: SendSession) -> None:
     assert second.calls[0][2] == first.calls[0][2]
 
 
+@pytest.mark.parametrize('retry', [False, True], ids=['initial', 'resume'])
+def test_temporary_refusal_of_all_pending_recipients(
+    session: SendSession, retry: bool
+) -> None:
+    later = (450, b'try later')
+    if retry:
+        # Leave different recipients outstanding on the first two messages.
+        smtp = FakeSMTP({'bob@example.org': later}, {'list@example.org': later})
+        with pytest.raises(RetryableSendError):
+            session.send(smtp.connector())
+        session = SendSession.load(session.directory)
+
+    pending = [msg.pending() for msg in session.state.messages if msg.pending()]
+    smtp = FakeSMTP(smtplib.SMTPRecipientsRefused(dict.fromkeys(pending[0], later)))
+    with pytest.raises(RetryableSendError):
+        session.send(smtp.connector())
+    assert [recipients for _, recipients, _ in smtp.calls] == pending
+
+    saved = SendSession.load(session.directory)
+    assert [msg.pending() for msg in saved.state.messages] == [pending[0], [], []]
+    smtp = FakeSMTP()
+    saved.send(smtp.connector())
+    assert smtp.calls == [(saved.state.fromaddr, pending[0], saved.message_bytes(0))]
+
+
 @pytest.mark.parametrize('when', ['first-attempt', 'on-retry'])
 def test_permanent_refusal_does_not_stall_the_series(
     session: SendSession, when: str
@@ -166,7 +191,15 @@ def test_permanent_refusal_does_not_stall_the_series(
 @pytest.mark.parametrize(
     'error',
     [
-        smtplib.SMTPRecipientsRefused({'bob@example.org': (550, b'no')}),
+        smtplib.SMTPRecipientsRefused(
+            dict.fromkeys(['bob@example.org', 'list@example.org'], (550, b'no'))
+        ),
+        smtplib.SMTPRecipientsRefused({'bob@example.org': (450, b'incomplete')}),
+        # RCPT 421 closes the connection and may leave recipients untried.
+        smtplib.SMTPRecipientsRefused({'bob@example.org': (421, b'closing')}),
+        smtplib.SMTPRecipientsRefused(
+            {'bob@example.org': (450, b'later'), 'list@example.org': (421, b'closing')}
+        ),
         smtplib.SMTPSenderRefused(550, b'no', 'alice@example.org'),
         # Raised before MAIL FROM, so no recipient was even named
         smtplib.SMTPHeloError(500, b'no'),
@@ -175,8 +208,10 @@ def test_permanent_refusal_does_not_stall_the_series(
 def test_envelope_rejection_is_safe_to_retry(
     session: SendSession, error: Exception
 ) -> None:
+    smtp = FakeSMTP(error)
     with pytest.raises(RetryableSendError, match='rejected'):
-        session.send(FakeSMTP(error).connector())
+        session.send(smtp.connector())
+    assert len(smtp.calls) == 1
     saved = SendSession.load(session.directory)
     assert saved.state.in_flight is None
     assert not any(message.accepted for message in saved.state.messages)
@@ -445,7 +480,7 @@ def retry_prompt(monkeypatch: pytest.MonkeyPatch, *answers: Any) -> Mock:
         smtplib.SMTPDataError(421, b'temporary'),
         smtplib.SMTPDataError(550, b'quota'),
         smtplib.SMTPSenderRefused(550, b'no', 'test-override@example.com'),
-        smtplib.SMTPRecipientsRefused({'list@example.org': (450, b'later')}),
+        smtplib.SMTPRecipientsRefused({'list@example.org': (421, b'closing')}),
     ],
 )
 def test_interactive_retry_reconnects_without_regenerating_mail(

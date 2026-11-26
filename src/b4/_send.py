@@ -305,17 +305,13 @@ class SendSession:
                 try:
                     refused = conn.sendmail(self.state.fromaddr, remaining, data)
                 except smtplib.SMTPRecipientsRefused as exc:
-                    # When nobody at all took the message, a 5xx is more
-                    # likely our own setup (relay denied) than a dead address.
-                    if not message.accepted or not all(
-                        _is_permanent(reply) for reply in exc.recipients.values()
-                    ):
+                    refused = exc.recipients
+                    if not _can_defer_refusal(refused, remaining, message.accepted):
                         self.state.in_flight = None
                         self.save()
                         raise RetryableSendError(
                             f'SMTP rejected the message: {exc}'
                         ) from exc
-                    refused = exc.recipients
                 except (
                     smtplib.SMTPSenderRefused,
                     # Both are raised before the sender is even named.
@@ -368,6 +364,29 @@ class SendSession:
 
 def _is_permanent(reply: Optional[Tuple[int, bytes]]) -> bool:
     return reply is not None and 500 <= reply[0] < 600
+
+
+def _can_defer_refusal(
+    refused: Dict[str, Tuple[int, bytes]], remaining: List[str], accepted: List[str]
+) -> bool:
+    """Whether a message that all its recipients refused can wait for a retry.
+
+    If not, the whole envelope counts as rejected: no recipient is
+    recorded and the send stops instead of moving to later messages.
+    """
+    # smtplib stops at a 421 and reports only the RCPTs tried so far.
+    if set(refused) != set(remaining):
+        return False
+    for code, _reply in refused.values():
+        # A 421 closes the connection, so later messages cannot go out on it.
+        # A code outside 4xx/5xx says nothing about the recipient.
+        if code == 421 or not 400 <= code < 600:
+            return False
+        # Until someone takes the message, a 5xx is more likely our own
+        # setup (relay denied) than a dead address.
+        if code >= 500 and not accepted:
+            return False
+    return True
 
 
 def pending_session(directory: Path) -> Optional[SendSession]:
