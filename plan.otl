@@ -19,6 +19,10 @@ v0.17
 		: surface during ordering); agent reviews the whole queue in a separate
 		: terminal with cumulative context; results load back into the workbook
 		: and the individual serieses
+		: Builds on `b4 review batch agent`: same review directories keyed by
+		: the branch tip, same non-interactive agent command, same safe storing
+		: What stays workbook-only: order, stacking, conflict findings and the
+		: workbook report; a label expression can seed the series list
 		[_] Conflict policy selectable per workbook (skip-and-continue with auto-eject, or stop-at-first)
 		[_] Batch trailer selection applied across a workbook
 			: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
@@ -32,6 +36,29 @@ v0.17
 		: Colored dot display in tracking list (git-bug deterministic color algorithm)
 		: Extend the review limit command to filter by label: prefix
 		: Reuse LabelScreen/AddLabelScreen label UI from the bugs TUI (extract to _common.py)
+		[_] Automatic lifecycle:<status> labels
+			: Computed from the series status when read, never stored, so they
+			: cannot drift from it
+			: The lifecycle: prefix is reserved: shown read-only in the label
+			: picker, cannot be added or removed by hand
+			: Gives the limit command status filtering through the same label: prefix
+		[_] `b4 review batch agent --label` to choose which series the agent reviews
+			: Labels with different prefixes must all match; labels with the same
+			: prefix are alternatives
+			: lifecycle:reviewing applies unless a lifecycle: label is given, so
+			: a bare run keeps its current meaning
+			: A series with no review branch is skipped with a message; a label
+			: that matches nothing is a clean exit, so cron stays quiet
+			: Check first: the batch reads the status from the review branch and
+			: labels live in the tracking database; decide which wins if they differ
+	[X] Batch agent reviews (`b4 review batch agent`)
+		: Mark Brown
+		: Runs the review agent on every series in the reviewing state that has
+		: no agent review of its current revision, one at a time, in a temporary
+		: worktree, so the maintainer's checkout is left alone
+		: b4.review-agent-batch-command for a command that runs without interaction
+		: A review counts only for the revision it was written for (source-revision)
+		: Reviews of failed, interrupted or killed agents are discarded
 	[X] Recognize patches that have landed elsewhere (b4.review-check-landed)
 		: Bernhard Kaindl, https://msgid.link/20261103-detect-merged-v1-0-743a882c6127@gmail.com
 		: Reimplemented: v1 did a shallow fetch into the user's repository,
