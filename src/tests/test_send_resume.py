@@ -1303,13 +1303,17 @@ def test_cli_permanent_refusal_finishes_with_a_warning(
     assert 'test-override@example.com' in caplog.text
 
 
-@pytest.mark.parametrize('failure', ['connect', 'sender'])
+@pytest.mark.parametrize(
+    'failure,transport',
+    [('connect', 'smtp'), ('sender', 'smtp'), ('sender', 'local'), ('sender', 'web')],
+)
 def test_submission_that_reached_nobody_does_not_block_a_fresh_send(
-    send_repo: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, failure: str, transport: str
 ) -> None:
     """Nothing went out, so there is nothing to protect from duplicates.
-    The user must be free to fix the series and send it again, instead
-    of being held to the saved messages."""
+    The user must be free to fix the series and send it again, through
+    any transport, instead of being held to the saved messages. Once the
+    replacement goes out, --resume must not deliver the old messages."""
     if failure == 'connect':
         connector = b4.SMTPConnector(Mock(side_effect=OSError('bad password')))
     else:
@@ -1322,16 +1326,57 @@ def test_submission_that_reached_nobody_does_not_block_a_fresh_send(
     with pytest.raises(SystemExit):
         run_send('--no-sign')
     stale = pending_session(send_repo)
-    assert stale is not None
+    assert stale is not None and stale.untouched()
     _cover, tracking = b4.ez.load_cover()
     b4.ez.store_cover('Two fixed changes\n\nTo: list@example.org\n', tracking)
+
     smtp = FakeSMTP()
     configure_smtp(monkeypatch, smtp)
-    run_send('--no-sign')
-    assert len(smtp.calls) == 3
-    assert b'Two fixed changes' in smtp.calls[0][2]
+    args = ['--no-sign']
+    if transport == 'web':
+        b4.MAIN_CONFIG['send-endpoint-web'] = 'https://example.org/send'
+        args = ['--use-web-endpoint']
+    elif transport == 'local':
+        monkeypatch.setattr(
+            b4, 'get_smtp', lambda dryrun=False: (['sendmail'], 'alice@example.org')
+        )
+    # Stopping at the prompt must leave the original available for resume.
+    with monkeypatch.context() as mp:
+        mp.setattr('builtins.input', Mock(side_effect=KeyboardInterrupt))
+        with pytest.raises(SystemExit) as exc:
+            run_send(*args)
+        assert exc.value.code == 130
+    assert pending_session(send_repo) is not None
+
+    delivered: List[bytes] = []
+
+    def deliver(smtp: Any, msgs: List[EmailMessage], **kwargs: Any) -> int:
+        if transport == 'web':
+            assert kwargs['web_endpoint'] == 'https://example.org/send'
+        else:
+            assert smtp == ['sendmail']
+        assert pending_session(send_repo) is None
+        with (
+            pytest.raises(b4.LockHeldError),
+            b4.lockfile_nb(str(send_repo / 'send.lock')),
+        ):
+            pass
+        delivered.extend(msg.as_bytes() for msg in msgs)
+        return len(msgs)
+
+    monkeypatch.setattr(b4, 'send_mail', deliver)
+    run_send(*args)
+    if transport == 'smtp':
+        delivered = [data for _sender, _recipients, data in smtp.calls]
+    assert len(delivered) == 3
+    assert b'Two fixed changes' in delivered[0]
     assert pending_session(send_repo) is None
     assert b4.ez.load_cover()[1]['series']['revision'] == 2
+
+    resumed = FakeSMTP()
+    configure_smtp(monkeypatch, resumed)
+    run_send('--resume')
+    assert not resumed.calls
 
 
 @pytest.mark.parametrize('failure', ['cannot-tag', 'tag-exists'])

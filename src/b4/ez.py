@@ -3291,10 +3291,18 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             or cmdargs.preview_to
             or cmdargs.resend
         )
-        # Checked again under the lock; this only spares the user the prompts.
-        if not unrecorded and _blocking_session(directory):
-            raise RuntimeError('An unfinished submission exists; use b4 send --resume')
-        _cmd_send(cmdargs, directory)
+        if unrecorded:
+            _cmd_send(cmdargs)
+            return
+        directory.parent.mkdir(mode=0o700, exist_ok=True)
+        directory.mkdir(mode=0o700, exist_ok=True)
+        with b4.lockfile_nb(str(directory / 'send.lock')):
+            previous = pending_session(directory)
+            if previous and not previous.untouched():
+                raise RuntimeError(
+                    'An unfinished submission exists; use b4 send --resume'
+                )
+            _cmd_send(cmdargs, directory, previous)
     except (RuntimeError, OSError, ValueError) as exc:
         logger.critical('CRITICAL: %s', exc)
         if _has_pending_send(directory):
@@ -3308,18 +3316,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if _has_pending_send(directory):
             logger.info('Saved SMTP progress can be continued with b4 send --resume.')
         sys.exit(130)
-
-
-def _blocking_session(directory: pathlib.Path) -> Optional[SendSession]:
-    """Return the saved submission that a fresh send would duplicate.
-
-    A submission that reached nobody protects nothing, and holding the
-    user to its messages would keep them from fixing the series first.
-    """
-    session = pending_session(directory)
-    if session is None or session.untouched():
-        return None
-    return session
 
 
 def _has_pending_send(directory: pathlib.Path) -> bool:
@@ -3530,7 +3526,11 @@ def _resume_send(cmdargs: argparse.Namespace, session: SendSession) -> None:
     _finish_send(session)
 
 
-def _cmd_send(cmdargs: argparse.Namespace, directory: pathlib.Path) -> None:
+def _cmd_send(
+    cmdargs: argparse.Namespace,
+    directory: Optional[pathlib.Path] = None,
+    previous: Optional[SendSession] = None,
+) -> None:
     mybranch = b4.git_get_current_branch()
     if mybranch is None:
         logger.critical('CRITICAL: Not currently on a branch, unable to send')
@@ -4011,88 +4011,59 @@ def _cmd_send(cmdargs: argparse.Namespace, directory: pathlib.Path) -> None:
             logger.critical('          Please re-enable signing or use SMTP')
             sys.exit(1)
 
-        try:
-            sent = b4.send_mail(
-                None,
-                send_msgs,
-                fromaddr=None,
-                bccaddrs=send_bcc,
-                patatt_sign=True,
-                dryrun=cmdargs.dryrun,
-                output_dir=cmdargs.output_dir,
-                web_endpoint=endpoint,
-                reflect=cmdargs.reflect,
-            )
-        except RuntimeError as ex:
-            logger.critical('CRITICAL: %s', ex)
-            sys.exit(1)
+        smtp, sender = None, None
     else:
         try:
-            smtp, fromaddr = b4.get_smtp(dryrun=cmdargs.dryrun)
+            smtp, sender = b4.get_smtp(dryrun=cmdargs.dryrun)
         except Exception as ex:
             logger.critical('Failed to configure the smtp connection:')
             logger.critical(ex)
             sys.exit(1)
 
-        if isinstance(smtp, b4.SMTPConnector) and not (
-            cmdargs.dryrun or cmdargs.reflect or cmdargs.resend or cmdargs.preview_to
-        ):
-            if tag_msg is None:
-                raise RuntimeError(
-                    'Cannot save submission bookkeeping without a cover/tag message'
-                )
-            branch, head, tree, cover_hash = source
-            series = tracking['series']
-            state = State(
-                change_id=series['change-id'],
-                revision=series['revision'],
-                branch=branch,
-                head=head,
-                tree=tree,
-                cover_hash=cover_hash,
-                tag_message=tag_msg,
-                cover_message_id=cl_msgid,
-                fromaddr=fromaddr,
-                messages=[],
+    # Once the replacement can send, the old messages must not be resumable.
+    if previous is not None:
+        logger.info('Replacing a saved submission that reached nobody')
+        previous.discard()
+    if directory is not None and isinstance(smtp, b4.SMTPConnector):
+        if tag_msg is None:
+            raise RuntimeError(
+                'Cannot save submission bookkeeping without a cover/tag message'
             )
-            directory.parent.mkdir(mode=0o700, exist_ok=True)
-            directory.mkdir(mode=0o700, exist_ok=True)
-            with b4.lockfile_nb(str(directory / 'send.lock')):
-                if _blocking_session(directory):
-                    raise RuntimeError(
-                        'An unfinished submission exists; use b4 send --resume'
-                    )
-                stale = pending_session(directory)
-                if stale is not None:
-                    logger.info('Replacing a saved submission that reached nobody')
-                    stale.discard()
-                # Before saving: --resume sends what was saved without this check.
-                _check_send_source(state)
-                prepared = b4.prepare_mail(
-                    send_msgs, bccaddrs=send_bcc, patatt_sign=sign
-                )
-                session = SendSession.prepare(
-                    directory / f'v{state.revision}', state, prepared
-                )
-                logger.info('Saved SMTP submission in %s', session.directory)
-                _send_with_retry(session, smtp, no_interactive=cmdargs.no_interactive)
-                _finish_send(session)
-            return
+        assert sender is not None
+        branch, head, tree, cover_hash = source
+        series = tracking['series']
+        state = State(
+            change_id=series['change-id'],
+            revision=series['revision'],
+            branch=branch,
+            head=head,
+            tree=tree,
+            cover_hash=cover_hash,
+            tag_message=tag_msg,
+            cover_message_id=cl_msgid,
+            fromaddr=sender,
+            messages=[],
+        )
+        # Before saving: --resume sends what was saved without this check.
+        _check_send_source(state)
+        prepared = b4.prepare_mail(send_msgs, bccaddrs=send_bcc, patatt_sign=sign)
+        session = SendSession.prepare(directory / f'v{state.revision}', state, prepared)
+        logger.info('Saved SMTP submission in %s', session.directory)
+        _send_with_retry(session, smtp, no_interactive=cmdargs.no_interactive)
+        _finish_send(session)
+        return
 
-        try:
-            sent = b4.send_mail(
-                smtp,
-                send_msgs,
-                fromaddr=fromaddr,
-                bccaddrs=send_bcc,
-                patatt_sign=sign,
-                dryrun=cmdargs.dryrun,
-                output_dir=cmdargs.output_dir,
-                reflect=cmdargs.reflect,
-            )
-        except RuntimeError as ex:
-            logger.critical('CRITICAL: %s', ex)
-            sys.exit(1)
+    sent = b4.send_mail(
+        smtp,
+        send_msgs,
+        fromaddr=sender,
+        bccaddrs=send_bcc,
+        patatt_sign=sign,
+        dryrun=cmdargs.dryrun,
+        output_dir=cmdargs.output_dir,
+        web_endpoint=endpoint,
+        reflect=cmdargs.reflect,
+    )
 
     logger.info('---')
     if cmdargs.dryrun:
