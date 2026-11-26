@@ -1090,6 +1090,10 @@ integrate your b4 workflow with patchwork.
      listing until the next refresh, but are dimmed. Custom states in
      this list are also offered when you change a series' state.
 
+     Check the spelling of custom states: Patchwork does not report an
+     unknown state as an error. It returns an empty listing instead,
+     even when the other states in the list are valid.
+
      A project can set this for all its maintainers in the ``.b4-config``
      file at the top of the tree.
 

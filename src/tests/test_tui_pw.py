@@ -1100,6 +1100,42 @@ class TestPwShowStates:
             await pilot.pause()
             assert dimmed() == {1: True, 2: True, 3: False}
 
+    @pytest.mark.parametrize(
+        'configured,series,hinted',
+        [
+            pytest.param('new, needs-ak', [], True, id='custom-state-empty'),
+            pytest.param('new, needs-ack', [_mk_series(1)], False, id='custom-state'),
+            pytest.param('under-review', [], False, id='stock-states-empty'),
+            pytest.param(None, [], False, id='default-states-empty'),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_empty_listing_names_custom_states(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        configured: Optional[str],
+        series: List[Dict[str, Any]],
+        hinted: bool,
+    ) -> None:
+        """Patchwork answers a query that has one unknown state slug with an
+        empty list, not an error, so a typo looks like a project with nothing
+        to do.  Name the custom states when the listing is empty.  Stock
+        states exist on every Patchwork, so an empty listing with only those
+        needs no notice."""
+        if configured is not None:
+            b4.MAIN_CONFIG['pw-show-states'] = configured
+        _install_series(monkeypatch, series)
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            hints = [n for n in _notices(app) if 'b4.pw-show-states' in n]
+            assert bool(hints) is hinted
+            if hinted:
+                # Only the custom slug is suspect; 'new' is always valid.
+                assert 'needs-ak' in hints[0]
+                assert 'new' not in hints[0]
+
 
 class TestPwSetStateNullName:
     """A Patchwork series with a null ``name`` must not crash set-state.

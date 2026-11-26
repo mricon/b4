@@ -462,6 +462,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                 self._backlog_count = result.outstanding
                 await self._populate(result.series)
                 self._maybe_notify_backlog()
+                self._maybe_notify_custom_states()
             elif event.state == WorkerState.ERROR:
                 for widget in self.query('#pw-loading'):
                     await widget.remove()
@@ -513,6 +514,31 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             f'{proj} has {self._backlog_count:,} outstanding patches — '
             f'showing only the last {self._window_days} days.',
             title='Large Patchwork backlog',
+            severity='warning',
+            timeout=10,
+        )
+
+    def _maybe_notify_custom_states(self) -> None:
+        """Name the custom show states when Patchwork has no patches in them.
+
+        Patchwork answers a query that has even one unknown state with an
+        empty list instead of an error, so a mistyped slug looks the same as
+        a project with nothing to do.  The stock states cannot be mistyped
+        into something Patchwork accepts, so only the custom ones are named.
+        """
+        if self._backlog_count:
+            return
+        custom = [
+            state
+            for state in self._show_states
+            if state not in b4.review.PW_STOCK_STATES
+        ]
+        if not custom:
+            return
+        self.notify(
+            f'Patchwork lists nothing if it does not know a state. '
+            f'Check b4.pw-show-states: {escape(", ".join(custom))}',
+            title='No patches in the configured states',
             severity='warning',
             timeout=10,
         )
