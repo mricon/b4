@@ -337,7 +337,8 @@ credentials may change; delivery still uses the original saved envelope
 sender and recipients. Recipient and signing options are not accepted with
 ``--resume``. Explicit ``email-exclude`` restrictions still apply: b4
 refuses to resume while a pending message has a recipient that matches
-one of them.
+one of them. A blind copy can still be delivered if the original Bcc
+overrode that exclusion. A new matching exclusion still blocks resume.
 
 To inspect the pending messages without sending anything, use::
 

@@ -111,6 +111,8 @@ class State:
     next_cover: Optional[str] = None
     next_tracking: Optional[Dict[str, Any]] = None
     partial_reroll_hash: Optional[str] = None
+    # Explicit Bcc destinations can override email-exclude at submission.
+    bcc_overrides: Dict[str, List[str]] = field(default_factory=dict)
 
 
 class SendSession:
@@ -172,6 +174,11 @@ class SendSession:
             raise ValueError('Invalid send state version or message list')
         if state.revision < 1 or type(state.finished) is not bool:
             raise ValueError('Invalid send revision/status')
+        if type(state.bcc_overrides) is not dict:
+            raise ValueError('Invalid Bcc exclusion overrides')
+        _check_addresses(list(state.bcc_overrides))
+        for patterns in state.bcc_overrides.values():
+            _check_addresses(patterns)
         for value in (
             state.change_id,
             state.branch,

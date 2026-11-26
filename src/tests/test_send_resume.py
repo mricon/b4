@@ -315,6 +315,8 @@ def test_changed_payload_is_rejected_before_connect(session: SendSession) -> Non
         {'finished': True},
         {'messages': []},
         {'revision': '4'},
+        {'bcc_overrides': []},
+        {'bcc_overrides': {'test@example.org': '*'}},
     ],
 )
 def test_corrupt_snapshot_rejected(
@@ -1304,6 +1306,7 @@ def test_bcc_survives_resume(
     send_repo: Path, monkeypatch: pytest.MonkeyPatch, source: str
 ) -> None:
     bcc = 'secret@example.org'
+    b4.MAIN_CONFIG['email-exclude'] = 'secret@Example.org,SeCrEt@*'
     if source == 'config':
         b4.MAIN_CONFIG['send-series-bcc'] = bcc
         args = ['--no-sign']
@@ -1313,6 +1316,7 @@ def test_bcc_survives_resume(
     configure_smtp(monkeypatch, first)
     with pytest.raises(SystemExit):
         run_send(*args)
+    b4.MAIN_CONFIG.pop('send-series-bcc', None)
     second = FakeSMTP()
     configure_smtp(monkeypatch, second)
     run_send('--resume')
@@ -1320,6 +1324,25 @@ def test_bcc_survives_resume(
     assert len(calls) == 4
     assert all(bcc in recipients for _sender, recipients, _data in calls)
     assert not any(bcc.encode() in data for _sender, _recipients, data in calls)
+
+
+def test_resume_blocks_unrecorded_bcc_exclusion(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Bcc that overrode one email-exclude rule at send time must not
+    slip past a rule added later, even though the address is the same."""
+    bcc = 'secret@example.org'
+    b4.MAIN_CONFIG['email-exclude'] = bcc
+    configure_smtp(monkeypatch, FakeSMTP({}, smtplib.SMTPDataError(421, b'later')))
+    with pytest.raises(SystemExit):
+        run_send('--no-sign', '--bcc', bcc)
+    b4.MAIN_CONFIG['email-exclude'] = f'{bcc},secr*@example.org'
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    with pytest.raises(SystemExit):
+        run_send('--resume')
+    assert not second.calls
+    assert 'now excluded by email-exclude' in caplog.text
 
 
 def test_cli_permanent_refusal_finishes_with_a_warning(

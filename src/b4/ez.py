@@ -3428,19 +3428,27 @@ def _finish_send(session: SendSession) -> None:
     )
 
 
+def _matching_excludes(addr: str, excludes: Set[str]) -> Set[str]:
+    return {
+        pattern.lower()
+        for pattern in excludes
+        if fnmatch.fnmatchcase(addr.lower(), pattern.lower())
+    }
+
+
 def _get_resume_smtp(
     session: SendSession, *, resolved_sent: bool = False
 ) -> b4.SMTPConnector:
     state = session.state
-    # Shell-style patterns, as cleanup_email_addrs() treats them
-    excludes = [pattern.lower() for pattern in b4.get_excluded_addrs()]
+    excludes = b4.get_excluded_addrs()
     for index, message in enumerate(state.messages):
         if not message.pending() or (index == state.in_flight and resolved_sent):
             continue
         if any(
-            fnmatch.fnmatchcase(addr.lower(), pattern)
+            _matching_excludes(addr, excludes).difference(
+                state.bcc_overrides.get(addr.lower(), [])
+            )
             for addr in message.recipients
-            for pattern in excludes
         ):
             raise RuntimeError(
                 'Saved recipients include an address now excluded by email-exclude; refusing to send'
@@ -4032,6 +4040,7 @@ def _cmd_send(
         assert sender is not None
         branch, head, tree, cover_hash = source
         series = tracking['series']
+        explicit_excludes = b4.get_excluded_addrs()
         state = State(
             change_id=series['change-id'],
             revision=series['revision'],
@@ -4043,6 +4052,11 @@ def _cmd_send(
             cover_message_id=cl_msgid,
             fromaddr=sender,
             messages=[],
+            bcc_overrides={
+                addr.lower(): sorted(matches)
+                for addr in send_bcc
+                if (matches := _matching_excludes(addr, explicit_excludes))
+            },
         )
         # Before saving: --resume sends what was saved without this check.
         _check_send_source(state)
