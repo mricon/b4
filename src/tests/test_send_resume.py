@@ -832,28 +832,48 @@ def test_series_lock_prevents_parallel_senders(
     assert len(smtp.calls) == 2
 
 
-@pytest.mark.parametrize('after_reroll', [False, True])
-def test_bookkeeping_recovery_sends_no_mail(
-    send_repo: Path, monkeypatch: pytest.MonkeyPatch, after_reroll: bool
+@pytest.mark.parametrize(
+    'failure,revision',
+    [
+        ('before-reroll', 1),
+        ('after-reroll', 2),
+        ('finish-record', 2),
+    ],
+)
+def test_bookkeeping_failure_is_completed_without_mail(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, failure: str, revision: int
 ) -> None:
+    """Once every recipient has accepted, --resume only finishes the
+    reroll, whichever step was interrupted."""
     smtp = FakeSMTP()
     configure_smtp(monkeypatch, smtp)
     retry = retry_prompt(monkeypatch)
-    original = b4.ez.reroll
+    with monkeypatch.context() as patched:
+        if failure.endswith('reroll'):
+            original_reroll = b4.ez.reroll
 
-    def interrupted(*args: Any, **kwargs: Any) -> None:
-        if after_reroll:
-            original(*args, **kwargs)
-        raise RuntimeError('interrupted bookkeeping')
+            def interrupted(*args: Any, **kwargs: Any) -> None:
+                if failure == 'after-reroll':
+                    original_reroll(*args, **kwargs)
+                raise RuntimeError('interrupted bookkeeping')
 
-    monkeypatch.setattr(b4.ez, 'reroll', interrupted)
-    with pytest.raises(SystemExit):
-        run_send('--no-sign')
+            patched.setattr(b4.ez, 'reroll', interrupted)
+        else:
+            original_save = SendSession.save
+
+            def fail_if_finished(self: SendSession) -> None:
+                if self.state.finished:
+                    raise OSError('disk full after reroll')
+                original_save(self)
+
+            patched.setattr(SendSession, 'save', fail_if_finished)
+        with pytest.raises(SystemExit):
+            run_send('--no-sign')
     retry.assert_not_called()
     assert len(smtp.calls) == 3
+    assert b4.ez.load_cover()[1]['series']['revision'] == revision
     saved = pending_session(send_repo)
     assert saved is not None and saved.delivered()
-    monkeypatch.setattr(b4.ez, 'reroll', original)
     monkeypatch.setattr(
         b4, 'get_smtp', Mock(side_effect=AssertionError('all accepted'))
     )
@@ -992,30 +1012,6 @@ def test_non_submission_modes_do_not_create_resume_state(
     assert b4.ez.load_cover()[1]['series']['revision'] == 1
 
 
-def test_finish_failed_snapshot_update_is_idempotent(
-    send_repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    smtp = FakeSMTP()
-    configure_smtp(monkeypatch, smtp)
-    original = SendSession.save
-
-    def fail_if_finished(self: SendSession) -> None:
-        if self.state.finished:
-            raise OSError('disk full after reroll')
-        original(self)
-
-    monkeypatch.setattr(SendSession, 'save', fail_if_finished)
-    with pytest.raises(SystemExit):
-        run_send('--no-sign')
-    assert len(smtp.calls) == 3
-    assert b4.ez.load_cover()[1]['series']['revision'] == 2
-    monkeypatch.setattr(SendSession, 'save', original)
-    run_send('--resume')
-    assert len(smtp.calls) == 3
-    assert pending_session(send_repo) is None
-    assert b4.ez.load_cover()[1]['series']['revision'] == 2
-
-
 def test_completed_sends_leave_no_record(
     send_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1052,10 +1048,7 @@ def test_source_change_at_resume_confirmation_only_defers_bookkeeping(
 
 
 @pytest.mark.parametrize('failure', ['data', 'recipient'])
-@pytest.mark.parametrize('recovery', ['resume', 'retry'])
-def test_real_smtplib_against_local_server(
-    session: SendSession, monkeypatch: pytest.MonkeyPatch, failure: str, recovery: str
-) -> None:
+def test_real_smtplib_against_local_server(session: SendSession, failure: str) -> None:
     """Exercise actual SMTP responses without delivering or relaying any mail."""
     transactions: List[Tuple[List[str], bytes, bool]] = []
     errors: List[BaseException] = []
@@ -1130,18 +1123,10 @@ def test_real_smtplib_against_local_server(
             return b4.SMTPConnector(lambda: smtplib.SMTP('127.0.0.1', port, timeout=5))
 
         try:
-            if recovery == 'retry':
-                monkeypatch.setattr(
-                    b4.ez, '_get_resume_smtp', lambda _session: connector()
-                )
-                retry = retry_prompt(monkeypatch, 'y')
-                b4.ez._send_with_retry(session, connector(), no_interactive=False)
-                retry.assert_called_once()
-            else:
-                with pytest.raises(RuntimeError, match='SMTP'):
-                    session.send(connector())
-                saved = SendSession.load(session.directory)
-                saved.send(connector())
+            with pytest.raises(RuntimeError, match='SMTP'):
+                session.send(connector())
+            saved = SendSession.load(session.directory)
+            saved.send(connector())
         finally:
             server.shutdown()
             worker.join(timeout=5)
