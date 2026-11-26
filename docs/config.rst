@@ -1087,7 +1087,8 @@ integrate your b4 workflow with patchwork.
          pw-show-states = new, needs-ack
 
      Series whose state changes to one outside this list stay in the
-     listing until the next refresh, but are dimmed.
+     listing until the next refresh, but are dimmed. Custom states in
+     this list are also offered when you change a series' state.
 
      A project can set this for all its maintainers in the ``.b4-config``
      file at the top of the tree.

@@ -24,6 +24,7 @@ from b4.review._review import (
     PwFetchResult,
     _pw_count_outstanding,
     pw_fetch_series,
+    pw_fetch_states,
 )
 
 # ---------------------------------------------------------------------------
@@ -284,3 +285,11 @@ class TestShowStates:
         b4.MAIN_CONFIG['pw-show-states'] = ['new', 'needs-ack']
         _sess, result = _fetch_with_backlog(monkeypatch, count=2, states=states)
         assert [s['state'] for s in result.series] == ['needs-ack']
+
+    def test_state_picker_offers_configured_states(self) -> None:
+        """A custom state the browser lists must also be one the user can
+        set, else series in it can be seen but not moved back into it."""
+        b4.MAIN_CONFIG['pw-show-states'] = 'new, needs-ack'
+        states = pw_fetch_states('k', 'https://pw', 'proj')
+        assert [s['slug'] for s in states].count('new') == 1
+        assert states[-1] == {'slug': 'needs-ack', 'name': 'Needs Ack'}

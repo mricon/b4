@@ -4324,6 +4324,20 @@ PW_WINDOW_DAYS = 30
 # Patchwork's hard cap on results per page; also our fetch page size.  Patches
 # arrive a page at a time, so this is the granularity of fetch progress.
 PW_PER_PAGE = 250
+# The states a fresh Patchwork install has; the same list git-pw hardcodes.
+# A server may have more, but the REST API has no endpoint that lists them.
+PW_STOCK_STATES = (
+    'new',
+    'under-review',
+    'accepted',
+    'rejected',
+    'rfc',
+    'not-applicable',
+    'changes-requested',
+    'awaiting-upstream',
+    'superseded',
+    'deferred',
+)
 PW_DEFAULT_SHOW_STATES = ('new', 'under-review')
 
 
@@ -4495,24 +4509,17 @@ def pw_fetch_states(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
     """Return available patch states.
 
     The Patchwork REST API does not expose a /states/ endpoint, so we
-    use the same hardcoded defaults as git-pw.  The slug doubles as
-    the display name with hyphens replaced by spaces and title-cased.
+    use the same hardcoded defaults as git-pw, plus any custom states
+    from ``b4.pw-show-states``.  The slug doubles as the display name
+    with hyphens replaced by spaces and title-cased.
 
     Returns a list of state dicts with 'slug' and 'name' keys.
     """
-    default_slugs = (
-        'new',
-        'under-review',
-        'accepted',
-        'rejected',
-        'rfc',
-        'not-applicable',
-        'changes-requested',
-        'awaiting-upstream',
-        'superseded',
-        'deferred',
-    )
-    return [{'slug': s, 'name': s.replace('-', ' ').title()} for s in default_slugs]
+    # Projects with custom states list them in b4.pw-show-states; offer them
+    # too, so a series can be moved into any state the browser lists.
+    slugs = list(PW_STOCK_STATES)
+    slugs += [s for s in pw_show_states() if s not in slugs]
+    return [{'slug': s, 'name': s.replace('-', ' ').title()} for s in slugs]
 
 
 def _pw_lookup_user_id(
