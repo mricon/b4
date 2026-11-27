@@ -8225,13 +8225,37 @@ def _suspend_to_shell(
         finally:
             os.unlink(rcfile)
     elif shellname == 'zsh':
-        real_zdotdir = os.environ.get('ZDOTDIR', os.path.expanduser('~'))
+        # zsh has no --rcfile, so b4 points ZDOTDIR at its own .zshenv,
+        # the first file zsh reads.  That file hands ZDOTDIR straight
+        # back: zsh looks ZDOTDIR up again before each later file, so the
+        # user's .zshenv, .zshrc and the rest load exactly as usual, even
+        # when their .zshenv moves ZDOTDIR somewhere else.
+        real_zdotdir = os.environ.get('ZDOTDIR')
+        if real_zdotdir is None:
+            restore = 'unset ZDOTDIR\n'
+            zshenv = os.path.join(os.path.expanduser('~'), '.zshenv')
+        else:
+            restore = f'ZDOTDIR={shlex.quote(real_zdotdir)}\n'
+            zshenv = os.path.join(real_zdotdir, '.zshenv')
+        qzshenv = shlex.quote(zshenv)
+        # precmd hooks run just before a prompt is shown, so this is the
+        # first point after the user's .zshrc has set up their own prompt.
+        # It removes itself so that only the hint is left behind.  The
+        # hook array is edited directly because add-zsh-hook is autoloaded
+        # from fpath, which the user's .zshenv may have replaced.
+        prompt_hook = (
+            '_b4_prompt_hint() {\n'
+            f'  PS1={shlex.quote(f"({hint}) ")}"$PS1"\n'
+            '  precmd_functions=(${precmd_functions:#_b4_prompt_hint})\n'
+            '  unfunction _b4_prompt_hint\n'
+            '}\n'
+            'precmd_functions+=(_b4_prompt_hint)\n'
+        )
         with tempfile.TemporaryDirectory(prefix='b4-shell-') as tmpdir:
-            zshrc = os.path.join(tmpdir, '.zshrc')
-            with open(zshrc, 'w') as f:
-                f.write(f'ZDOTDIR="{real_zdotdir}"\n')
-                f.write('[ -f "$ZDOTDIR/.zshrc" ] && . "$ZDOTDIR/.zshrc"\n')
-                f.write(f'PS1="({hint}) $PS1"\n')
+            with open(os.path.join(tmpdir, '.zshenv'), 'w') as f:
+                f.write(restore)
+                f.write(f'[ -f {qzshenv} ] && . {qzshenv}\n')
+                f.write(prompt_hook)
             env['ZDOTDIR'] = tmpdir
             subprocess.run([shell], env=env, cwd=cwd)
     else:

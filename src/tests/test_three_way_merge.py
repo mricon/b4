@@ -1,4 +1,6 @@
 import os
+import shutil
+import subprocess
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -495,6 +497,146 @@ class TestSuspendToShellCwd:
         _args, kwargs = mock_run.call_args
         assert kwargs['env']['B4_SERIES_URL'] == 'https://example.com/x'
         assert 'B4_SERIES_URL' not in os.environ
+
+
+# Runs after startup, standing in for the first prompt: precmd hooks fire
+# only before a prompt, and a non-interactive test never reaches one.
+_ZSH_PROBE = """
+for f in $precmd_functions; do $f; done
+print -r -- "B4TEST ps1=$PS1"
+print -r -- "B4TEST zdotdir=${ZDOTDIR-<unset>}"
+print -r -- "B4TEST hooks=${precmd_functions[*]}"
+print -r -- "B4TEST seen=$SEEN"
+"""
+
+
+@pytest.mark.skipif(shutil.which('zsh') is None, reason='zsh is not installed')
+class TestSuspendToShellZsh:
+    """Run the zsh sub-shell for real against typical user configurations.
+
+    b4 points ZDOTDIR at its own directory to add the prompt hint, so
+    each case checks that the user's own startup files still load as
+    usual, and that the hint and b4's hook do not leak into the shell.
+    """
+
+    @staticmethod
+    def _run(monkeypatch: pytest.MonkeyPatch, home: Path) -> Dict[str, str]:
+        monkeypatch.setenv('SHELL', shutil.which('zsh') or 'zsh')
+        monkeypatch.setenv('HOME', str(home))
+        real_run = subprocess.run
+        output: Dict[str, str] = {}
+
+        def _probe(cmd: List[str], env: Dict[str, str], cwd: Optional[str]) -> None:
+            # -d skips the system-wide rc files, which differ per distro.
+            res = real_run(
+                [cmd[0], '-d', '-i', '-c', _ZSH_PROBE],
+                env=env,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+            )
+            for line in res.stdout.splitlines():
+                if line.startswith('B4TEST '):
+                    key, val = line[7:].split('=', 1)
+                    output[key] = val
+
+        with patch('b4.subprocess.run', side_effect=_probe):
+            b4._suspend_to_shell(hint='b4')
+        return output
+
+    def test_zshenv_variables_reach_zshrc(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Unexported settings from .zshenv are visible in .zshrc.
+
+        Setups like home-manager define variables in .zshenv that .zshrc
+        then uses; they are not exported, so the parent shell's
+        environment does not carry them into the sub-shell.
+        """
+        monkeypatch.delenv('ZDOTDIR', raising=False)
+        (tmp_path / '.zshenv').write_text('MYVAR=from-zshenv\n')
+        (tmp_path / '.zshrc').write_text('SEEN=$MYVAR\n')
+        out = self._run(monkeypatch, tmp_path)
+        assert out['seen'] == 'from-zshenv'
+        assert out['ps1'].startswith('(b4) ')
+
+    def test_zshenv_moving_zdotdir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A .zshenv that moves ZDOTDIR still gets its own .zshrc and the hint.
+
+        Keeping the config in ~/.config/zsh this way is common; the hint
+        must not be lost when the user's .zshenv changes ZDOTDIR.
+        """
+        monkeypatch.delenv('ZDOTDIR', raising=False)
+        confdir = tmp_path / '.config' / 'zsh'
+        confdir.mkdir(parents=True)
+        (tmp_path / '.zshenv').write_text('ZDOTDIR="$HOME/.config/zsh"\n')
+        (confdir / '.zshrc').write_text("SEEN=config-zshrc\nPS1='user> '\n")
+        out = self._run(monkeypatch, tmp_path)
+        assert out['seen'] == 'config-zshrc'
+        assert out['ps1'] == '(b4) user> '
+        assert out['zdotdir'] == str(confdir)
+
+    @pytest.mark.parametrize(
+        'zdotdir_name',
+        [
+            pytest.param(None, id='home'),
+            # Quotes and $ must reach zsh as plain path characters.
+            pytest.param('it\'s "$odd" dir', id='odd-chars'),
+        ],
+    )
+    def test_zdotdir_restored(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        zdotdir_name: Optional[str],
+    ) -> None:
+        """The shell ends up with the user's own ZDOTDIR, or none at all.
+
+        b4's temporary directory is removed when the shell exits, so
+        nothing in the shell may keep pointing at it; and a user who
+        never set ZDOTDIR should not suddenly have one.
+        """
+        if zdotdir_name is None:
+            monkeypatch.delenv('ZDOTDIR', raising=False)
+            zdotdir = tmp_path
+            expected = '<unset>'
+        else:
+            zdotdir = tmp_path / zdotdir_name
+            zdotdir.mkdir()
+            monkeypatch.setenv('ZDOTDIR', str(zdotdir))
+            expected = str(zdotdir)
+        (zdotdir / '.zshrc').write_text("SEEN=zshrc\nPS1='user> '\n")
+        out = self._run(monkeypatch, tmp_path)
+        assert out['seen'] == 'zshrc'
+        assert out['ps1'] == '(b4) user> '
+        assert out['zdotdir'] == expected
+        assert '_b4' not in out['hooks']
+
+    def test_hint_survives_replaced_fpath(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The hint does not depend on zsh's bundled functions.
+
+        A .zshenv may point fpath at the user's own functions only, and
+        then helpers like add-zsh-hook cannot be autoloaded.
+        """
+        monkeypatch.delenv('ZDOTDIR', raising=False)
+        (tmp_path / '.zshenv').write_text('fpath=("$HOME/funcs")\n')
+        (tmp_path / '.zshrc').write_text("PS1='user> '\n")
+        out = self._run(monkeypatch, tmp_path)
+        assert out['ps1'] == '(b4) user> '
+        assert '_b4' not in out['hooks']
+
+    def test_no_user_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Without any startup files the shell still starts with the hint."""
+        monkeypatch.delenv('ZDOTDIR', raising=False)
+        out = self._run(monkeypatch, tmp_path)
+        assert out['ps1'].startswith('(b4) ')
 
 
 class TestConflictResolutionFlow:
