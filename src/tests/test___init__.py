@@ -332,6 +332,102 @@ def test_fixes_trailer_format_validation(
     assert fixes == expected_fixes_values
 
 
+@pytest.mark.parametrize(
+    'body,expected_extinfo,expected_others',
+    [
+        pytest.param(
+            'Signed-off-by: Foo Foo <foo@example.com>\n'
+            '[ Bar Bar: adapted the foo bits,\n'
+            '  Baz: and other: bits. ]\n'
+            'Signed-off-by: Bar Bar <bar@example.com>\n',
+            [
+                '[ Bar Bar: adapted the foo bits,\n  Baz: and other: bits. ]',
+                None,
+            ],
+            [''],
+            id='between-two-trailers',
+        ),
+        # Custody notes often mention code or references, e.g. arr[0] or [1]
+        pytest.param(
+            'Signed-off-by: Foo Foo <foo@example.com>\n'
+            '[ Bar Bar: fixed the arr[0] handling,\n'
+            '  see [1] for details ]\n'
+            'Signed-off-by: Bar Bar <bar@example.com>\n',
+            [
+                '[ Bar Bar: fixed the arr[0] handling,\n  see [1] for details ]',
+                None,
+            ],
+            [''],
+            id='nested-brackets',
+        ),
+        pytest.param(
+            'Signed-off-by: Foo Foo <foo@example.com>\n'
+            '[Bar Bar: fixed the arr[0] handling]\n'
+            'Signed-off-by: Bar Bar <bar@example.com>\n',
+            ['[Bar Bar: fixed the arr[0] handling]', None],
+            [''],
+            id='nested-brackets-single-line',
+        ),
+        # Each person who changed the patch may leave a comment of their own
+        pytest.param(
+            'Signed-off-by: Foo Foo <foo@example.com>\n'
+            '[ Bar Bar: adapted the foo bits,\n'
+            '  and other bits ]\n'
+            '[ Baz Baz: fixed a typo ]\n'
+            'Signed-off-by: Baz Baz <baz@example.com>\n',
+            [
+                '[ Bar Bar: adapted the foo bits,\n'
+                '  and other bits ]\n'
+                '[ Baz Baz: fixed a typo ]',
+                None,
+            ],
+            [''],
+            id='several-comments-in-a-row',
+        ),
+        pytest.param(
+            'Signed-off-by: Foo Foo <foo@example.com>\n'
+            '[ this is not closed\n'
+            'Signed-off-by: Bar Bar <bar@example.com>\n',
+            [None, None],
+            ['[ this is not closed', ''],
+            id='unclosed-bracket',
+        ),
+        pytest.param(
+            'Signed-off-by: Foo Foo <foo@example.com>\n'
+            '[ this is not\n'
+            '\n'
+            '  closed here ]\n'
+            'Signed-off-by: Bar Bar <bar@example.com>\n',
+            [None, None],
+            ['[ this is not', '', '  closed here ]', ''],
+            id='blank-line-ends-comment',
+        ),
+        # A footnote such as "[1] https://..." is text, not a comment
+        pytest.param(
+            'Signed-off-by: Foo Foo <foo@example.com>\n'
+            '[1] this is a footnote\n'
+            '    with more text ]\n'
+            'Signed-off-by: Bar Bar <bar@example.com>\n',
+            [None, None],
+            ['[1] this is a footnote', '    with more text ]', ''],
+            id='bracket-closes-mid-line',
+        ),
+        pytest.param(
+            '[ some\n  comment ]\nSigned-off-by: Bar Bar <bar@example.com>\n',
+            [None],
+            ['[ some', '  comment ]', ''],
+            id='not-after-a-trailer',
+        ),
+    ],
+)
+def test_multiline_extinfo(
+    body: str, expected_extinfo: List[Optional[str]], expected_others: List[str]
+) -> None:
+    trailers, others = b4.LoreMessage.find_trailers(body)
+    assert [t.extinfo for t in trailers] == expected_extinfo
+    assert others == expected_others
+
+
 @pytest.mark.parametrize('wrap', ['\n', ' \n', ' \n    ', '\t\n\t'])
 def test_wrapped_fixes_trailer_matches_original(wrap: str) -> None:
     original = 'Fixes: 239b7c5705a4 ("vfio/pci: close display console during unrealize, not finalize")'
@@ -472,6 +568,14 @@ def test_trailer_addr_parsing(
             {'addmysob': True, 'copyccs': True},
             'with-ignored',
             {'trailers-ignore-from': 'followup-reviewer1@example.com'},
+        ),
+        ('custody-comment', {}, {'addmysob': True}, 'unordered', {}),
+        (
+            'custody-comment',
+            {},
+            {'addmysob': True, 'copyccs': True},
+            'ordered',
+            {'trailer-order': 'Cc,Fixes*,Link*,Suggested*,Reviewed*,Tested*,*'},
         ),
         ('partial-reroll', {}, {'addmysob': True}, 'defaults', {}),
         ('nore', {}, {}, 'defaults', {}),

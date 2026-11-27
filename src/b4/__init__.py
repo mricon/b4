@@ -3364,6 +3364,28 @@ class LoreMessage:
         return indexes
 
     @staticmethod
+    def _find_comment_end(lines: List[str], start: int) -> Optional[int]:
+        """Find the line that closes the [ ... ] comment opened on lines[start].
+
+        Brackets can nest, as in arr[0], so the comment ends where its
+        opening bracket closes. To keep regular text such as "[1] https://..."
+        out, that has to be at the end of a line, with no blank line before it.
+        """
+        depth = 0
+        for pos in range(start, len(lines)):
+            text = lines[pos].strip()
+            if not text:
+                return None
+            for chpos, char in enumerate(text):
+                if char == '[':
+                    depth += 1
+                elif char == ']':
+                    depth -= 1
+                    if depth == 0:
+                        return pos if chpos == len(text) - 1 else None
+        return None
+
+    @staticmethod
     def find_trailers(
         body: str, followup: bool = False
     ) -> Tuple[List[LoreTrailer], List[str]]:
@@ -3401,10 +3423,12 @@ class LoreMessage:
         trailers: List[LoreTrailer] = list()
         others: List[str] = list()
         was_trailer = False
+        was_comment = False
+        lines = [x.strip('\r') for x in body.split('\n')]
         at = 0
-        for line in body.split('\n'):
+        while at < len(lines):
+            line = lines[at]
             at += 1
-            line = line.strip('\r')
             matches = re.search(r'^\s*(\w\S+):\s+(\S.*)', line, flags=re.I)
             if matches:
                 oname, ovalue = list(matches.groups())
@@ -3459,16 +3483,27 @@ class LoreMessage:
                     extinfo = egr[1]
 
                 was_trailer = True
+                was_comment = False
                 ltrailer = LoreTrailer(name=oname, value=ovalue, extinfo=extinfo)
                 trailers.append(ltrailer)
                 continue
-            # Is it an extended info line, e.g.:
+            # Is it an extended info comment, e.g.:
             # Signed-off-by: Foo Foo <foo@foo.com>
             # [for the foo bits]
-            if len(line) > 2 and was_trailer and re.search(r'^\s*\[[^]]+]\s*$', line):
-                trailers[-1].extinfo = line
-                was_trailer = False
-                continue
+            # Each person changing a patch may add one, so several can follow
+            if (was_trailer or was_comment) and line.lstrip().startswith('['):
+                end = LoreMessage._find_comment_end(lines, at - 1)
+                if end is not None:
+                    comment = '\n'.join(lines[at - 1 : end + 1])
+                    if was_comment:
+                        comment = f'{trailers[-1].extinfo}\n{comment}'
+                    trailers[-1].extinfo = comment
+                    logger.debug('Extinfo %d-%d: %s', at, end + 1, trailers[-1])
+                    at = end + 1
+                    was_trailer = False
+                    was_comment = True
+                    continue
+            was_comment = False
             was_trailer = False
             others.append(line)
 
