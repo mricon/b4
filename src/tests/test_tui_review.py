@@ -1173,13 +1173,15 @@ class TestSendBookkeeping:
         dryrun: bool = False,
         reviews: Optional[List[Dict[str, Any]]] = None,
         check: Optional[Callable[[ReviewApp], None]] = None,
+        answer: str = 'send',
         **patches: Any,
     ) -> Tuple[List[str], bool, List[Dict[str, Any]]]:
         """Drive action_send with staged reviews and a send that succeeds.
 
         *reviews* are my reviews, one per patch; by default a single patch
         with a reply and a trailer.  *check* looks at the app once the send
-        is over.  *patches* are extra mock.patch.object() keyword targets on
+        is over.  *answer* is what the maintainer picks in SendScreen.
+        *patches* are extra mock.patch.object() keyword targets on
         the app.
         Returns (notification texts, app still running, patches after send).
         """
@@ -1210,10 +1212,10 @@ class TestSendBookkeeping:
                     mock.patch.object(app, 'suspend', lambda: contextlib.nullcontext())
                 )
 
-                # SendScreen is a confirmation dialog; answer yes for it.
+                # SendScreen is a confirmation dialog; answer it for the test.
                 def _confirm(screen: Any, callback: Any = None) -> None:
                     assert callback is not None
-                    callback(True)
+                    callback(answer)
 
                 stack.enter_context(mock.patch.object(app, 'push_screen', _confirm))
                 stack.enter_context(mock.patch('b4.get_smtp', return_value=(None, 'm')))
@@ -1313,16 +1315,108 @@ class TestSendBookkeeping:
             _hide_skipped={'new': True},
         )
 
+    @staticmethod
+    def _states(patches: List[Dict[str, Any]]) -> List[str]:
+        usercfg = b4.get_user_config()
+        return [b4.review._get_patch_state(p, usercfg) for p in patches]
+
     @pytest.mark.asyncio
-    async def test_draft_hint_does_not_offer_skip(self, gitdir: str) -> None:
-        """Skipping no longer holds a draft back, so the draft warning must
-        not suggest it as the way to send everything else."""
+    @pytest.mark.parametrize(
+        'answer,dryrun,sent,states',
+        [
+            ('send', False, True, ['done', 'done']),
+            # Nothing went out, so the maintainer has nothing to undo
+            ('cancel', False, False, ['draft', 'done']),
+            ('preview', False, False, ['draft', 'done']),
+            ('send', True, False, ['draft', 'done']),
+        ],
+    )
+    async def test_drafts_are_marked_done_only_once_sent(
+        self,
+        gitdir: str,
+        answer: str,
+        dryrun: bool,
+        sent: bool,
+        states: List[str],
+    ) -> None:
+        """Ctrl-y sends a series with drafts in it instead of asking for d on
+        each one first.  The drafts turn done only when the mail is out."""
+        with mock.patch(
+            'b4.review_tui._review_app.SendScreen', wraps=SendScreen
+        ) as screen:
+            texts, _running, patches = await self._send(
+                gitdir,
+                f'send-drafts-{answer}-{dryrun}',
+                reviews=[
+                    {'reply': 'Half a thought'},
+                    {'trailers': ['Reviewed-by: Me <me@example.com>']},
+                ],
+                answer=answer,
+                dryrun=dryrun,
+            )
+        assert not any('Still in draft' in t for t in texts)
+        assert screen.call_args.kwargs['mark_done'] == [('1/2', '')]
+        assert any(t.startswith('Sent ') for t in texts) == sent
+        assert self._states(patches) == states
+
+    @pytest.mark.asyncio
+    async def test_deliberate_drafts_are_flagged(self, gitdir: str) -> None:
+        """A draft the maintainer un-marked, or one holding a NACK, is more
+        than "has comments", so the confirmation says which is which."""
+        with mock.patch(
+            'b4.review_tui._review_app.SendScreen', wraps=SendScreen
+        ) as screen:
+            _texts, _running, patches = await self._send(
+                gitdir,
+                'send-drafts-flagged',
+                reviews=[
+                    {
+                        'trailers': ['Reviewed-by: Me <me@example.com>'],
+                        'patch-state': 'draft',
+                    },
+                    {'trailers': ['Nacked-by: Me <me@example.com>']},
+                    {'reply': 'Half a thought'},
+                ],
+            )
+        assert screen.call_args.kwargs['mark_done'] == [
+            ('1/3', 'un-marked'),
+            ('2/3', 'NACK'),
+            ('3/3', ''),
+        ]
+        assert self._states(patches) == ['done', 'done', 'done']
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('preview_mode', [False, True])
+    async def test_preview_offered_only_from_review_mode(
+        self, gitdir: str, preview_mode: bool
+    ) -> None:
+        """Ctrl-y works from both modes; from review mode the maintainer has
+        not seen the emails yet, so the dialog offers to show them."""
+
+        def _check(app: ReviewApp) -> None:
+            assert app.check_action('send', ())
+
+        with mock.patch(
+            'b4.review_tui._review_app.SendScreen', wraps=SendScreen
+        ) as screen:
+            await self._send(
+                gitdir,
+                f'send-offer-preview-{preview_mode}',
+                check=_check,
+                answer='cancel',
+                _preview_mode={'new': preview_mode},
+            )
+        assert screen.call_args.kwargs['offer_preview'] == (not preview_mode)
+
+    @pytest.mark.asyncio
+    async def test_preview_answer_switches_to_email_mode(self, gitdir: str) -> None:
+        def _check(app: ReviewApp) -> None:
+            assert app._preview_mode
+
         texts, _running, _patches = await self._send(
-            gitdir, 'send-draft-hint', reviews=[{'reply': 'Half a thought'}]
+            gitdir, 'send-preview-answer', answer='preview', check=_check
         )
-        draft = [t for t in texts if 'Still in draft' in t]
-        assert 'Mark as done (d)' in draft[0]
-        assert 'skip' not in draft[0]
+        assert not any('Sent' in t for t in texts)
 
     @pytest.mark.asyncio
     async def test_a_dry_run_is_not_recorded_as_sent(self, gitdir: str) -> None:

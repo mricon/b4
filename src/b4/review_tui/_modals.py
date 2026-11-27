@@ -320,6 +320,7 @@ def _review_help_lines(has_agent: bool = False) -> List[str]:
         lines.append('  [bold]a[/bold]         Run review agent\n')
     lines += [
         '  [bold]C[/bold]         Run CI checks\n',
+        '  [bold]Ctrl-y[/bold]    Mark drafts done and send review emails\n',
         '  [bold]e[/bold]         Toggle email mode\n',
         '\n',
         '[bold]Email mode[/bold]\n',
@@ -656,11 +657,15 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class SendScreen(ModalScreen[bool]):
-    """Modal confirmation screen showing a summary of emails to send."""
+class SendScreen(ModalScreen[str]):
+    """Modal confirmation screen showing a summary of emails to send.
+
+    Dismisses with 'send', 'cancel', or 'preview' (show the emails first).
+    """
 
     BINDINGS = [
         Binding('y', 'confirm', 'Confirm'),
+        Binding('e', 'preview', 'Show emails'),
         Binding('escape', 'cancel', 'Cancel'),
         Binding('q', 'cancel', 'Cancel', show=False),
         Binding('j', 'scroll_down', 'Scroll down', show=False),
@@ -696,16 +701,37 @@ class SendScreen(ModalScreen[bool]):
         self,
         msgs: List[email.message.EmailMessage],
         skipped_msgids: Optional[Set[str]] = None,
+        mark_done: Optional[List[Tuple[str, str]]] = None,
+        offer_preview: bool = False,
     ) -> None:
         super().__init__()
         self._msgs = msgs
         # Message-Ids of replies to skipped patches, which are easy to
         # forget about since skipped patches are dimmed in the list
         self._skipped_msgids = skipped_msgids or set()
+        # (label, note) of drafts that sending marks done; the note flags
+        # drafts that mean more than "has comments"
+        self._mark_done = mark_done or []
+        # Only review mode has an email mode to send the maintainer to
+        self._offer_preview = offer_preview
+
+    def check_action(self, action: str, parameters: Tuple[Any, ...]) -> Optional[bool]:
+        if action == 'preview':
+            return self._offer_preview
+        return True
 
     def compose(self) -> ComposeResult:
         text = Text()
-        text.append(f'Send {len(self._msgs)} review email(s)?', style='bold')
+        if self._mark_done:
+            text.append('Mark these as done and send your reply?', style='bold')
+            text.append('\n')
+            for label, note in self._mark_done:
+                text.append(f'\n  {label}')
+                if note:
+                    text.append(f' ({note})', style='bold yellow')
+            text.append('\n')
+        else:
+            text.append(f'Send {len(self._msgs)} review email(s)?', style='bold')
         text.append('\n')
         for msg in self._msgs:
             subj = str(msg['Subject']) if msg['Subject'] else '(no subject)'
@@ -737,16 +763,23 @@ class SendScreen(ModalScreen[bool]):
             text.append('\n')
         with Vertical(id='send-dialog'):
             yield Static(text, markup=False)
-            yield Static('y confirm  |  Escape cancel', id='send-hint')
+            hints = ['y send']
+            if self._offer_preview:
+                hints.append('e show emails')
+            hints.append('Escape cancel')
+            yield Static('  |  '.join(hints), id='send-hint')
 
     def _get_dialog(self) -> Vertical:
         return self.query_one('#send-dialog', Vertical)
 
     def action_confirm(self) -> None:
-        self.dismiss(True)
+        self.dismiss('send')
+
+    def action_preview(self) -> None:
+        self.dismiss('preview')
 
     def action_cancel(self) -> None:
-        self.dismiss(False)
+        self.dismiss('cancel')
 
     def action_scroll_down(self) -> None:
         self._get_dialog().scroll_down()

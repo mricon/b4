@@ -115,6 +115,64 @@ class TestSendScreen:
             assert 'patch 1 (skipped)' not in text
             assert 'patch 2 (skipped)' in text
 
+    @pytest.mark.asyncio
+    async def test_drafts_to_mark_done_are_listed(self) -> None:
+        """Sending marks every draft as done, so the confirmation names them
+        and flags the two drafts that mean more than "has comments": one
+        the maintainer un-marked on purpose, and one that carries a NACK."""
+        msg = email.message.EmailMessage()
+        msg['Subject'] = 'Re: [PATCH 1/3] one'
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                SendScreen(
+                    [msg],
+                    mark_done=[('1/3', ''), ('2/3', 'un-marked'), ('3/3', 'NACK')],
+                )
+            )
+            await pilot.pause()
+
+            text = static_text(app.screen.query(Static).first())
+            assert 'Mark these as done and send your reply?' in text
+            assert '1/3\n' in text
+            assert '2/3 (un-marked)' in text
+            assert '3/3 (NACK)' in text
+            assert 'Send 1 review email' not in text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'offer_preview,key,result',
+        [
+            (False, 'y', 'send'),
+            (False, 'escape', 'cancel'),
+            (True, 'e', 'preview'),
+            # Without the offer, e must not quietly cancel or send
+            (False, 'e', None),
+        ],
+    )
+    async def test_answers(
+        self, offer_preview: bool, key: str, result: Optional[str]
+    ) -> None:
+        """The caller tells apart sending, cancelling and asking to read the
+        emails first; e is only offered where there is an email mode to go to."""
+        msg = email.message.EmailMessage()
+        msg['Subject'] = 'Re: [PATCH] one'
+        app = ModalTestApp()
+        answers: List[Optional[str]] = []
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                SendScreen([msg], offer_preview=offer_preview), answers.append
+            )
+            await pilot.pause()
+            hint = static_text(app.screen.query_one('#send-hint', Static))
+            assert ('e show emails' in hint) == offer_preview
+            await pilot.press(key)
+            await pilot.pause()
+
+        assert answers == ([] if result is None else [result])
+
 
 # ---------------------------------------------------------------------------
 # HelpScreen

@@ -445,6 +445,7 @@ Key                        Action
 ``H``                      Hide skipped — toggle visibility of skipped patches
 ``c``                      CI checks — run check commands and show results
                            (see :ref:`ci_check_protocol`)
+``Ctrl-y``                 Send review emails (see :ref:`drafts <review_quick_send>`)
 ``e``                      Toggle email mode
 ``s``                      Shell — suspend to an interactive sub-shell
 ``?``                      Help — show keybinding reference
@@ -836,6 +837,30 @@ on a skipped patch, delete the draft.
 
 When taking patches via cherry-pick, skipped and landed patches are
 pre-deselected in the patch selection dialog.
+
+.. _review_quick_send:
+
+**Sending with drafts left**
+
+You do not have to mark each patch done before you send. Press
+``Ctrl-y`` in review mode or in email mode. If any patch is still a
+draft, the confirmation asks::
+
+    Mark these as done and send your reply?
+
+and lists those patches, followed by the usual summary of the emails.
+Two kinds of draft get a note, because sending changes more than you
+might expect:
+
+* ``(un-marked)`` — you pressed ``d`` to un-mark this patch, to say you
+  were still working on it.
+* ``(NACK)`` — your review of this patch has a ``Nacked-by`` trailer.
+
+Press ``y`` to send. The listed patches become done only after the mail
+goes out. If you cancel, if sending fails, or if you run with
+``--email-dry-run``, they stay drafts. When you press ``Ctrl-y`` in
+review mode, you can also press ``e`` to go to email mode and read the
+emails first.
 
 **Follow-up messages**
 

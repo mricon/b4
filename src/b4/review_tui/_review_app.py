@@ -209,7 +209,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     # Actions visible only in review mode
     _REVIEW_ACTIONS = frozenset({'followups', 'agent'})
     # Actions visible only in email mode
-    _EMAIL_ACTIONS = frozenset({'discard_review', 'edit_tocc', 'send'})
+    _EMAIL_ACTIONS = frozenset({'discard_review', 'edit_tocc'})
 
     BINDING_GROUPS = {
         'trailer': 'Review',
@@ -1863,10 +1863,15 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         )
 
     def action_send(self) -> None:
-        """Collect review emails and show send confirmation dialog."""
+        """Collect review emails and show send confirmation dialog.
+
+        Drafts do not hold the send back: the dialog lists them, and they
+        are marked done once the mail is out.
+        """
         self._save_tracking()
 
-        draft_patches = []
+        drafts: List[Tuple[int, Dict[str, Any]]] = []
+        mark_done: List[Tuple[str, str]] = []
         total = len(self._commit_shas)
         all_targets = [(0, self._series)] + [
             (i + 1, p) for i, p in enumerate(self._patches)
@@ -1874,13 +1879,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         for display_idx, target in all_targets:
             if b4.review._get_patch_state(target, self._usercfg) == 'draft':
                 label = 'cover' if display_idx == 0 else f'{display_idx}/{total}'
-                draft_patches.append(label)
-        if draft_patches:
-            self.notify(
-                f'Still in draft: {", ".join(draft_patches)}. Mark as done (d) first.',
-                severity='warning',
-            )
-            return
+                drafts.append((display_idx, target))
+                mark_done.append((label, b4.review._draft_note(target, self._usercfg)))
 
         to_send = b4.review.collect_review_emails(
             self._series,
@@ -1899,8 +1899,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             if review.get('patch-state') == 'skip'
         }
 
-        def _on_send_confirmed(confirmed: Optional[bool]) -> None:
-            if not confirmed:
+        def _on_send_confirmed(answer: Optional[str]) -> None:
+            if answer == 'preview':
+                self.action_toggle_preview()
+                return
+            if answer != 'send':
                 return
             sent = send_suspended(
                 self, msgs, patatt_sign=self._patatt_sign, dryrun=self._email_dryrun
@@ -1921,6 +1924,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             try:
                 self._reply_sent = True
                 self._tracking['series']['status'] = 'replied'
+                for _idx, target in drafts:
+                    b4.review._set_patch_state(target, self._usercfg, 'done')
                 # Record what every sent review carried, so that the next
                 # send only carries what is added since.
                 current_rev = int(self._series.get('revision', 1))
@@ -1933,6 +1938,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                         f'Sent, but could not record it on {self._branch}',
                         severity='warning',
                     )
+                for display_idx, _target in drafts:
+                    self._refresh_patch_item(display_idx)
                 self._mark_patches_answered(msgs)
                 mark_outgoing_seen(msgs)
                 if self._hide_skipped:
@@ -1944,7 +1951,13 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 self.notify(f'Sent, but recording it failed: {ex}', severity='warning')
 
         self.push_screen(
-            SendScreen(msgs, skipped_msgids=skipped_msgids), _on_send_confirmed
+            SendScreen(
+                msgs,
+                skipped_msgids=skipped_msgids,
+                mark_done=mark_done,
+                offer_preview=not self._preview_mode,
+            ),
+            _on_send_confirmed,
         )
 
     def on_click(self, event: Click) -> None:

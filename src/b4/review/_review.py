@@ -1137,6 +1137,11 @@ def _has_my_approval_in_thread(target: Dict[str, Any], my_email: str) -> bool:
 SKIPPED_PATCH_STATES: Tuple[str, ...] = ('skip', 'landed')
 
 
+def _trailer_keys(review: Dict[str, Any]) -> Set[str]:
+    """Return the lowercased names of the trailers staged in *review*."""
+    return {t.split(':', 1)[0].strip().lower() for t in review.get('trailers', [])}
+
+
 def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     """Derive the effective per-patch state for the current user.
 
@@ -1160,9 +1165,7 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
         # would otherwise derive 'done' from an approval trailer they have
         # already staged (see _toggle_patch_done).
         return explicit
-    trailer_keys = {
-        t.split(':', 1)[0].strip().lower() for t in review.get('trailers', [])
-    }
+    trailer_keys = _trailer_keys(review)
     if _NACK_TRAILER_KEY in trailer_keys:
         return 'draft'
     if trailer_keys & _APPROVAL_TRAILER_KEYS:
@@ -1191,6 +1194,20 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     ):
         return 'external'
     return explicit if explicit else ''
+
+
+def _draft_note(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
+    """Say why a draft is more than "has comments", or return ''.
+
+    Sending from a draft marks it done, so the maintainer should see when
+    that overrides an un-marked patch or a NACK.
+    """
+    review = _get_my_review(target, usercfg)
+    if review.get('patch-state') == 'draft':
+        return 'un-marked'
+    if _NACK_TRAILER_KEY in _trailer_keys(review):
+        return 'NACK'
+    return ''
 
 
 def _set_patch_state(

@@ -174,9 +174,11 @@ the reply.
 
 Sending the review
 ~~~~~~~~~~~~~~~~~~
-When you are satisfied, press ``Ctrl-y`` to send. B4 composes
-proper ``In-Reply-To`` / ``References`` headers so your review appears
-in the correct thread on the mailing list.
+When you are satisfied, press ``Ctrl-y`` to send. This works in
+review mode too. If some patches are still drafts, b4 lists them and
+marks them done when the mail goes out. B4 composes proper
+``In-Reply-To`` / ``References`` headers so your review appears in the
+correct thread on the mailing list.
 
 .. tip::
 
