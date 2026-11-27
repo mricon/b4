@@ -428,6 +428,109 @@ def test_multiline_extinfo(
     assert others == expected_others
 
 
+@pytest.mark.parametrize(
+    'trailers,addmysob,expected',
+    [
+        # A comment between our signoff and the next one belongs to the next signer
+        pytest.param(
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Maint: reworked\n'
+            '  the foo bits ]\n'
+            'Signed-off-by: Maint <maint@example.com>\n',
+            False,
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Maint: reworked\n'
+            '  the foo bits ]\n'
+            'Signed-off-by: Maint <maint@example.com>\n'
+            'Reviewed-by: Rev <rev@example.com>\n',
+            id='next-signer-comment-stays',
+        ),
+        pytest.param(
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[Maint: reworked the foo bits]\n'
+            'Signed-off-by: Maint <maint@example.com>\n',
+            False,
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[Maint: reworked the foo bits]\n'
+            'Signed-off-by: Maint <maint@example.com>\n'
+            'Reviewed-by: Rev <rev@example.com>\n',
+            id='next-signer-single-line-comment-stays',
+        ),
+        pytest.param(
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Maint: reworked\n'
+            '  the foo bits ]\n'
+            'Signed-off-by: Maint <maint@example.com>\n',
+            True,
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Maint: reworked\n'
+            '  the foo bits ]\n'
+            'Signed-off-by: Maint <maint@example.com>\n'
+            'Reviewed-by: Rev <rev@example.com>\n'
+            'Signed-off-by: Test Override <test-override@example.com>\n',
+            id='next-signer-comment-stays-with-new-signoff',
+        ),
+        # Without a next signer, the comment is ours
+        pytest.param(
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Test Override: fixed\n'
+            '  a typo ]\n'
+            'Acked-by: Ack <ack@example.com>\n',
+            True,
+            'Acked-by: Ack <ack@example.com>\n'
+            'Reviewed-by: Rev <rev@example.com>\n'
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Test Override: fixed\n'
+            '  a typo ]\n',
+            id='no-next-signer-comment-moves',
+        ),
+        # A # comment is on our own line, so it is ours
+        pytest.param(
+            'Signed-off-by: Test Override <test-override@example.com>  # foo\n'
+            'Signed-off-by: Maint <maint@example.com>\n',
+            False,
+            'Signed-off-by: Maint <maint@example.com>\n'
+            'Reviewed-by: Rev <rev@example.com>\n'
+            'Signed-off-by: Test Override <test-override@example.com>  # foo\n',
+            id='hash-comment-moves',
+        ),
+        pytest.param(
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Maint: reworked\n'
+            '  the foo bits ]\n'
+            'Signed-off-by: Maint <maint@example.com>\n'
+            'Signed-off-by: Test Override <test-override@example.com>\n',
+            True,
+            'Signed-off-by: Test Override <test-override@example.com>\n'
+            '[ Maint: reworked\n'
+            '  the foo bits ]\n'
+            'Signed-off-by: Maint <maint@example.com>\n'
+            'Reviewed-by: Rev <rev@example.com>\n'
+            'Signed-off-by: Test Override <test-override@example.com>\n',
+            id='signed-twice-only-last-moves',
+        ),
+    ],
+)
+def test_fix_trailers_keeps_comments(
+    trailers: str, addmysob: bool, expected: str
+) -> None:
+    raw = (
+        'From: Test Author <test@example.com>\n'
+        'Subject: [PATCH] test comments\n'
+        'Date: Mon, 1 Jan 2024 00:00:00 +0000\n'
+        'Message-Id: <20240101-test-v1-1-abc123@example.com>\n'
+        '\n'
+        'Commit body here.\n'
+        '\n'
+        f'{trailers}'
+    )
+    msg = email.message_from_string(raw, policy=email.policy.EmailPolicy(utf8=True))
+    lmsg = b4.LoreMessage(msg)
+    extra = b4.LoreTrailer(name='Reviewed-by', value='Rev <rev@example.com>')
+    lmsg.fix_trailers(extras=[extra], addmysob=addmysob)
+    assert lmsg.body == f'Commit body here.\n\n{expected}'
+
+
 @pytest.mark.parametrize('wrap', ['\n', ' \n', ' \n    ', '\t\n\t'])
 def test_wrapped_fixes_trailer_matches_original(wrap: str) -> None:
     original = 'Fixes: 239b7c5705a4 ("vfio/pci: close display console during unrealize, not finalize")'

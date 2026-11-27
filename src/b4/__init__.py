@@ -3651,9 +3651,22 @@ class LoreMessage:
         sobtr = LoreTrailer()
         hasmysob = False
         if sobtr in btrailers:
-            # Our own signoff always moves to the bottom of all trailers
-            hasmysob = True
-            btrailers.remove(sobtr)
+            # Only our last signoff matters: earlier ones are links in the
+            # chain of custody and stay where they are
+            at = len(btrailers) - 1 - btrailers[::-1].index(sobtr)
+            mysob = btrailers[at]
+            # A [ ... ] comment between our signoff and the next signer's
+            # describes that signer's changes, so moving our signoff would
+            # misattribute it. A # comment is on our own line, so it is ours.
+            # Otherwise our signoff moves to the bottom, with its comment.
+            nextcomment = bool(
+                mysob.extinfo and not mysob.extinfo.lstrip().startswith('#')
+            )
+            nextsigner = any(x.lname == 'signed-off-by' for x in btrailers[at + 1 :])
+            if not (nextcomment and nextsigner):
+                hasmysob = True
+                del btrailers[at]
+                sobtr.extinfo = mysob.extinfo
 
         new_trailers = self.followup_trailers
         if extras:
